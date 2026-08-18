@@ -49,6 +49,18 @@ export const api = {
     create: (userId: string, order: object) =>
       req(`/orders/${userId}`, { method: "POST", body: JSON.stringify(order) }),
   },
+
+  admin: {
+    requestCode: () =>
+      req("/admin/request-code", { method: "POST" }) as Promise<{ adminEmail: string; code: string; expiresIn: number }>,
+    verifyCode: (code: string) =>
+      req("/admin/verify-code", { method: "POST", body: JSON.stringify({ code }) }) as Promise<{ valid: boolean; error?: string }>,
+  },
+
+  quickChat: {
+    sendMessage: (messages: { from: string; text: string; time: string }[]) =>
+      req("/quick-chat/message", { method: "POST", body: JSON.stringify({ messages }) }) as Promise<{ message: string }>,
+  },
 };
 
 export type User = { userId: string; email: string; name: string };

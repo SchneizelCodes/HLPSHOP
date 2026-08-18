@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { api, loadUser, saveUser, clearUser, getOrCreateGuestId, type User } from "../lib/api";
 import {
   Home, Search, ShoppingCart, Heart, User as UserIcon, ChevronRight, ChevronLeft, Star,
@@ -7,7 +7,7 @@ import {
   X, Camera, ChevronDown, Clock, Tag, Award, Phone, Mail, Send, Eye, EyeOff,
   TrendingUp, Zap, ShoppingBag, Check, Wallet, Building2, Banknote, Edit2,
   Trash2, LogOut, Copy, ImageIcon, Share2, Grid, List, Lock, Globe,
-  Monitor, Smartphone, LayoutGrid, Shield, FileText
+  Monitor, Smartphone, LayoutGrid, Shield, FileText, Bot, KeyRound, RefreshCw
 } from "lucide-react";
 
 // ─── GREETING + CLOCK HOOKS ───────────────────────────────────────────────────
@@ -52,7 +52,7 @@ type Page =
   | "orders" | "order-detail" | "tracking" | "rating" | "return"
   | "profile" | "account-settings" | "address-book" | "payment-methods" | "notifications"
   | "coupons" | "loyalty" | "help" | "faq" | "contact" | "live-chat"
-  | "about" | "shipping-policy" | "return-policy" | "privacy" | "terms";
+  | "about" | "shipping-policy" | "return-policy" | "privacy" | "terms" | "quick-chat";
 
 type LayoutMode = "mobile" | "desktop";
 
@@ -281,8 +281,10 @@ const DESKTOP_BOTTOM_NAV = [
   { icon: Settings, label: "Settings", page: "account-settings" as Page },
 ];
 
-function DesktopSidebar({ current, onNavigate, cartCount, notifCount, user, onLogout }: {
-  current: Page; onNavigate: (p: Page) => void; cartCount: number; notifCount: number; user: User | null; onLogout: () => void;
+function DesktopSidebar({ current, onNavigate, cartCount, notifCount, user, onLogout, isAdmin, onAdminAccess, onRevokeAdmin }: {
+  current: Page; onNavigate: (p: Page) => void; cartCount: number; notifCount: number;
+  user: User | null; onLogout: () => void;
+  isAdmin: boolean; onAdminAccess: () => void; onRevokeAdmin: () => void;
 }) {
   return (
     <aside className="fixed left-0 top-0 bottom-0 w-56 bg-[#0F0F0F] border-r border-border flex flex-col z-40">
@@ -293,6 +295,11 @@ function DesktopSidebar({ current, onNavigate, cartCount, notifCount, user, onLo
             <span className="text-white text-[11px] font-black tracking-tight">SW</span>
           </div>
           <span className="text-base font-extrabold text-foreground">ShopWisely</span>
+          {isAdmin && (
+            <span className="ml-auto text-[9px] bg-[#FF6B00]/15 text-[#FF6B00] border border-[#FF6B00]/25 px-1.5 py-0.5 rounded-md font-bold tracking-wide flex-none">
+              ADMIN
+            </span>
+          )}
         </div>
       </div>
 
@@ -312,6 +319,20 @@ function DesktopSidebar({ current, onNavigate, cartCount, notifCount, user, onLo
             </button>
           );
         })}
+
+        {/* Quick Chat — admin only */}
+        {isAdmin && (
+          <>
+            <p className="text-[10px] text-muted-foreground/60 uppercase tracking-widest font-semibold px-2 mb-2 mt-4">Admin</p>
+            <button
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 text-left ${current === "quick-chat" ? "bg-[#FF6B00]/15 text-[#FF6B00]" : "text-muted-foreground hover:text-foreground hover:bg-[#1A1A1A]"}`}
+              onClick={() => onNavigate("quick-chat")}>
+              <MessageCircle size={17} />
+              <span className="flex-1">Quick Chat</span>
+              <span className="w-1.5 h-1.5 bg-green-400 rounded-full flex-none" />
+            </button>
+          </>
+        )}
       </nav>
 
       {/* Bottom Nav */}
@@ -327,6 +348,22 @@ function DesktopSidebar({ current, onNavigate, cartCount, notifCount, user, onLo
             </button>
           );
         })}
+
+        {/* Admin access trigger / revoke */}
+        {isAdmin ? (
+          <button onClick={onRevokeAdmin}
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-red-400/70 hover:text-red-400 hover:bg-red-500/10 transition-all duration-150 text-left">
+            <Shield size={17} />
+            Revoke Admin
+          </button>
+        ) : (
+          <button onClick={onAdminAccess}
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-[#1A1A1A] transition-all duration-150 text-left">
+            <Shield size={17} />
+            Admin Access
+          </button>
+        )}
+
         {/* User avatar row */}
         <div className="flex items-center gap-2.5 px-3 py-2.5 mt-1">
           <div className="w-7 h-7 rounded-full bg-[#FF6B00]/20 flex items-center justify-center flex-none">
@@ -385,6 +422,131 @@ function DesktopContent({ children }: { children: React.ReactNode }) {
     <main className="ml-56 mt-14 min-h-screen bg-background">
       {children}
     </main>
+  );
+}
+
+// ─── ADMIN ACCESS MODAL ───────────────────────────────────────────────────────
+
+function AdminAccessModal({ onClose, onGrantAccess }: { onClose: () => void; onGrantAccess: () => void }) {
+  const [step, setStep] = useState<1 | 2>(1);
+  const [loading, setLoading] = useState(false);
+  const [serverCode, setServerCode] = useState("");
+  const [adminEmail, setAdminEmail] = useState("");
+  const [inputCode, setInputCode] = useState("");
+  const [codeError, setCodeError] = useState("");
+  const [countdown, setCountdown] = useState(0);
+
+  // Countdown timer for code expiry
+  useEffect(() => {
+    if (countdown <= 0) return;
+    const id = setInterval(() => setCountdown(c => c - 1), 1000);
+    return () => clearInterval(id);
+  }, [countdown]);
+
+  const requestCode = async () => {
+    setLoading(true);
+    setCodeError("");
+    try {
+      const data = await api.admin.requestCode();
+      setServerCode(data.code);
+      setAdminEmail(data.adminEmail);
+      setCountdown(data.expiresIn);
+      setStep(2);
+    } catch (e: any) {
+      setCodeError(e.message ?? "Failed to generate code. Try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVerify = async () => {
+    if (inputCode.length !== 6) return;
+    setLoading(true);
+    setCodeError("");
+    try {
+      const data = await api.admin.verifyCode(inputCode);
+      if (data.valid) {
+        onGrantAccess();
+        onClose();
+      } else {
+        setCodeError(data.error ?? "Incorrect code.");
+      }
+    } catch (e: any) {
+      setCodeError(e.message ?? "Verification failed. Try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const mmss = `${String(Math.floor(countdown / 60)).padStart(2, "0")}:${String(countdown % 60).padStart(2, "0")}`;
+
+  return (
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-card border border-border rounded-2xl w-full max-w-sm overflow-hidden">
+        {step === 1 ? (
+          <div className="p-6">
+            <div className="w-12 h-12 bg-[#FF6B00]/15 rounded-xl flex items-center justify-center mb-4">
+              <Shield size={22} className="text-[#FF6B00]" />
+            </div>
+            <h2 className="text-lg font-bold text-foreground mb-1">Admin Access</h2>
+            <p className="text-sm text-muted-foreground mb-6">Are you an authorized admin for ShopWisely?</p>
+            {codeError && <p className="text-xs text-red-400 mb-3">{codeError}</p>}
+            <div className="flex gap-3">
+              <button onClick={onClose} disabled={loading}
+                className="flex-1 py-2.5 rounded-xl border border-border text-sm font-semibold text-muted-foreground hover:text-foreground hover:bg-[#1A1A1A] transition-colors disabled:opacity-50">
+                No
+              </button>
+              <button onClick={requestCode} disabled={loading}
+                className="flex-1 py-2.5 rounded-xl bg-[#FF6B00] text-white text-sm font-semibold hover:bg-[#E05F00] transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
+                {loading ? <RefreshCw size={14} className="animate-spin" /> : null}
+                {loading ? "Sending…" : "Yes, I am"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="p-6">
+            <div className="w-12 h-12 bg-[#FF6B00]/15 rounded-xl flex items-center justify-center mb-4">
+              <KeyRound size={22} className="text-[#FF6B00]" />
+            </div>
+            <h2 className="text-lg font-bold text-foreground mb-1">Verify Identity</h2>
+            <p className="text-sm text-muted-foreground mb-1">Code sent to admin email:</p>
+            <p className="text-xs font-semibold text-[#FF6B00] mb-4 truncate">{adminEmail}</p>
+
+            {/* Code shown on screen — in production, remove this and use only email */}
+            <div className="bg-[#0F0F0F] border border-[#FF6B00]/30 rounded-xl p-4 mb-4 text-center">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-semibold mb-1.5">Access Code</p>
+              <p className="text-3xl font-black tracking-[0.35em] text-[#FF6B00]">{serverCode}</p>
+              {countdown > 0 && (
+                <p className="text-[10px] text-muted-foreground mt-1.5">Expires in {mmss}</p>
+              )}
+              {countdown === 0 && (
+                <p className="text-[10px] text-red-400 mt-1.5">Expired — go back and request a new code</p>
+              )}
+            </div>
+
+            <input
+              value={inputCode}
+              onChange={e => { setInputCode(e.target.value.replace(/\D/g, "").slice(0, 6)); setCodeError(""); }}
+              onKeyDown={e => e.key === "Enter" && handleVerify()}
+              placeholder="Enter 6-digit code"
+              className="w-full bg-[#1A1A1A] border border-border rounded-xl px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-[#FF6B00] text-center tracking-[0.3em] transition-all"
+            />
+            {codeError && <p className="text-xs text-red-400 mt-2 text-center">{codeError}</p>}
+            <div className="flex gap-3 mt-4">
+              <button onClick={() => { setStep(1); setInputCode(""); setCodeError(""); setServerCode(""); }} disabled={loading}
+                className="flex-1 py-2.5 rounded-xl border border-border text-sm font-semibold text-muted-foreground hover:text-foreground hover:bg-[#1A1A1A] transition-colors disabled:opacity-50">
+                Back
+              </button>
+              <button onClick={handleVerify} disabled={inputCode.length !== 6 || loading || countdown === 0}
+                className="flex-1 py-2.5 rounded-xl bg-[#FF6B00] text-white text-sm font-semibold hover:bg-[#E05F00] transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                {loading ? <RefreshCw size={14} className="animate-spin" /> : null}
+                {loading ? "Verifying…" : "Verify"}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -1515,6 +1677,150 @@ function SimplePage({ title, onBack, isDesktop, onNavigate }: { title: string; o
   );
 }
 
+// ─── QUICK CHAT PAGE ──────────────────────────────────────────────────────────
+
+interface ChatMessage {
+  id: number; from: "admin" | "user" | "system"; text: string; time: string;
+}
+
+function QuickChatPage({ isDesktop, isAdmin }: { isDesktop: boolean; isAdmin: boolean }) {
+  const [messages, setMessages] = useState<ChatMessage[]>([
+    { id: 1, from: "system", text: "ShopWisely AI Support — powered by OpenAI", time: "" },
+    { id: 2, from: "admin", text: "Hello! Welcome to ShopWisely support. How can I help you today?", time: "09:00" },
+  ]);
+  const [input, setInput] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to bottom on new messages
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, isLoading]);
+
+  const nowStr = () => {
+    const d = new Date();
+    return `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
+  };
+
+  const sendMessage = async () => {
+    const text = input.trim();
+    if (!text || isLoading) return;
+    setInput("");
+
+    const userMsg: ChatMessage = { id: Date.now(), from: "user", text, time: nowStr() };
+    const nextMessages = [...messages, userMsg];
+    setMessages(nextMessages);
+    setIsLoading(true);
+
+    try {
+      const chatHistory = nextMessages.filter(m => m.from !== "system");
+      const data = await api.quickChat.sendMessage(chatHistory);
+      setMessages(prev => [...prev, {
+        id: Date.now() + 1,
+        from: "admin",
+        text: data.message,
+        time: nowStr(),
+      }]);
+    } catch (e: any) {
+      setMessages(prev => [...prev, {
+        id: Date.now() + 1,
+        from: "system",
+        text: `AI error: ${e.message ?? "Unable to reach OpenAI. Check your API key."}`,
+        time: "",
+      }]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className={`flex flex-col ${isDesktop ? "h-[calc(100vh-56px)]" : "h-screen"}`}>
+      {!isDesktop && <MobileTopBar title="Quick Chat" />}
+
+      {/* Chat header */}
+      <div className="flex-none px-4 py-3 border-b border-border bg-[#0F0F0F] flex items-center gap-3">
+        <div className="w-9 h-9 rounded-xl bg-[#FF6B00]/15 flex items-center justify-center flex-none">
+          <Bot size={18} className="text-[#FF6B00]" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-foreground">AI Support Chat</p>
+          <p className="text-[11px] text-green-400 flex items-center gap-1">
+            <span className="w-1.5 h-1.5 bg-green-400 rounded-full inline-block" />
+            Connected · gpt-4o-mini
+          </p>
+        </div>
+        {isAdmin && (
+          <span className="flex-none text-[10px] bg-[#FF6B00]/15 text-[#FF6B00] border border-[#FF6B00]/25 px-2.5 py-1 rounded-full font-bold tracking-wide">
+            ADMIN
+          </span>
+        )}
+      </div>
+
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+        {messages.map(msg =>
+          msg.from === "system" ? (
+            <div key={msg.id} className="flex justify-center">
+              <span className="text-[11px] text-muted-foreground bg-[#1A1A1A] border border-border px-3 py-1.5 rounded-full flex items-center gap-1.5">
+                <Bot size={11} />
+                {msg.text}
+              </span>
+            </div>
+          ) : (
+            <div key={msg.id} className={`flex ${msg.from === "admin" ? "justify-start" : "justify-end"}`}>
+              {msg.from === "admin" && (
+                <div className="w-6 h-6 rounded-full bg-[#FF6B00]/20 flex items-center justify-center flex-none mr-2 mt-1">
+                  <Bot size={12} className="text-[#FF6B00]" />
+                </div>
+              )}
+              <div className={`max-w-[75%] px-4 py-2.5 rounded-2xl space-y-0.5 ${
+                msg.from === "admin"
+                  ? "bg-[#1E1E1E] border border-border text-foreground rounded-tl-sm"
+                  : "bg-[#FF6B00] text-white rounded-tr-sm"
+              }`}>
+                <p className="text-sm leading-snug">{msg.text}</p>
+                <p className={`text-[10px] ${msg.from === "admin" ? "text-muted-foreground" : "text-white/60"}`}>{msg.time}</p>
+              </div>
+            </div>
+          )
+        )}
+
+        {/* Typing indicator */}
+        {isLoading && (
+          <div className="flex justify-start">
+            <div className="w-6 h-6 rounded-full bg-[#FF6B00]/20 flex items-center justify-center flex-none mr-2 mt-1">
+              <Bot size={12} className="text-[#FF6B00]" />
+            </div>
+            <div className="bg-[#1E1E1E] border border-border px-4 py-3 rounded-2xl rounded-tl-sm flex items-center gap-1">
+              <span className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+              <span className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+              <span className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+            </div>
+          </div>
+        )}
+
+        <div ref={bottomRef} />
+      </div>
+
+      {/* Input bar */}
+      <div className={`flex-none px-4 py-3 border-t border-border bg-background flex items-center gap-2.5 ${!isDesktop ? "mb-16" : ""}`}>
+        <input
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && sendMessage()}
+          placeholder={isLoading ? "AI is typing…" : "Type a message…"}
+          disabled={isLoading}
+          className="flex-1 bg-[#1A1A1A] border border-border rounded-xl px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-[#FF6B00] transition-all disabled:opacity-60"
+        />
+        <button onClick={sendMessage} disabled={!input.trim() || isLoading}
+          className="w-10 h-10 flex-none bg-[#FF6B00] rounded-xl flex items-center justify-center hover:bg-[#E05F00] transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+          <Send size={16} className="text-white" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -1530,6 +1836,8 @@ export default function App() {
   // Pick a random greeting style once per session (0–4)
   const [greetingStyle] = useState(() => Math.floor(Math.random() * 5));
   const serverTime = useServerClock();
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [showAdminModal, setShowAdminModal] = useState(false);
 
   // Load cart + wishlist from Supabase when user is available
   const loadUserData = useCallback(async (u: User) => {
@@ -1712,6 +2020,7 @@ export default function App() {
       case "confirmation": return <ConfirmationPage onNavigate={navigate} orderId={lastOrderId} />;
       case "orders": return <OrdersPage onNavigate={navigate} isDesktop={isDesktop} userId={user?.userId} />;
       case "profile": return <ProfilePage onNavigate={navigate} isDesktop={isDesktop} user={user} onLogout={handleLogout} />;
+      case "quick-chat": return <QuickChatPage isDesktop={isDesktop} isAdmin={isAdmin} />;
       default:
         if (simplePagesMap[page]) {
           const backPage: Page = ["orders", "order-detail", "tracking", "rating", "return"].includes(page) ? "orders"
@@ -1731,7 +2040,8 @@ export default function App() {
       ) : isDesktop ? (
         // Desktop: sidebar + top bar + content
         <>
-          <DesktopSidebar current={page} onNavigate={navigate} cartCount={cartCount} notifCount={2} user={user} onLogout={handleLogout} />
+          <DesktopSidebar current={page} onNavigate={navigate} cartCount={cartCount} notifCount={2} user={user} onLogout={handleLogout}
+            isAdmin={isAdmin} onAdminAccess={() => setShowAdminModal(true)} onRevokeAdmin={() => { setIsAdmin(false); if (page === "quick-chat") navigate("home"); }} />
           <DesktopTopBar current={page} onNavigate={navigate} cartCount={cartCount} notifCount={2} greeting={greeting} serverTime={serverTime} />
           <DesktopContent>{renderContent()}</DesktopContent>
         </>
@@ -1745,6 +2055,32 @@ export default function App() {
 
       {/* Layout Toggle — always visible */}
       <LayoutToggle mode={layout} onToggle={() => setLayout(l => l === "mobile" ? "desktop" : "mobile")} />
+
+      {/* Mobile: floating admin Quick Chat button (admin only) */}
+      {!isDesktop && isAdmin && !isFullscreen && (
+        <button
+          onClick={() => navigate("quick-chat")}
+          className="fixed bottom-24 right-4 z-40 w-12 h-12 bg-[#FF6B00] rounded-2xl shadow-lg flex items-center justify-center hover:bg-[#E05F00] transition-colors">
+          <MessageCircle size={20} className="text-white" />
+        </button>
+      )}
+
+      {/* Mobile: admin access button (non-admin, non-fullscreen) */}
+      {!isDesktop && !isAdmin && !isFullscreen && (
+        <button
+          onClick={() => setShowAdminModal(true)}
+          className="fixed bottom-24 right-4 z-40 w-10 h-10 bg-[#1A1A1A] border border-border rounded-xl flex items-center justify-center hover:border-[#FF6B00]/40 transition-colors">
+          <Shield size={16} className="text-muted-foreground" />
+        </button>
+      )}
+
+      {/* Admin Access Modal */}
+      {showAdminModal && (
+        <AdminAccessModal
+          onClose={() => setShowAdminModal(false)}
+          onGrantAccess={() => { setIsAdmin(true); setShowAdminModal(false); }}
+        />
+      )}
     </div>
   );
 }

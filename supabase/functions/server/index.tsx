@@ -151,4 +151,76 @@ app.post("/make-server-cbe884d8/orders/:userId", async (c) => {
   return c.json(order);
 });
 
+// ─── ADMIN CODE ───────────────────────────────────────────────────────────────
+
+// Fixed business owner email — change this to the real admin email
+const ADMIN_EMAIL = "admin@shopwisely.com";
+
+app.post("/make-server-cbe884d8/admin/request-code", async (c) => {
+  const code = Math.floor(100000 + Math.random() * 900000).toString();
+  const expiresAt = Date.now() + 5 * 60 * 1000; // 5-minute window
+  await kv.set("admin_code_pending", { code, expiresAt });
+  // Production: send `code` via email to ADMIN_EMAIL here
+  // For now: returning code directly so it can be displayed on screen
+  return c.json({ adminEmail: ADMIN_EMAIL, code, expiresIn: 300 });
+});
+
+app.post("/make-server-cbe884d8/admin/verify-code", async (c) => {
+  const { code } = await c.req.json();
+  if (!code) return c.json({ valid: false, error: "Code required" }, 400);
+  const stored = await kv.get("admin_code_pending");
+  if (!stored) return c.json({ valid: false, error: "No active code — request a new one." }, 400);
+  if (Date.now() > stored.expiresAt) {
+    await kv.del("admin_code_pending");
+    return c.json({ valid: false, error: "Code expired — request a new one." }, 400);
+  }
+  if (code !== stored.code) return c.json({ valid: false, error: "Incorrect code." }, 400);
+  await kv.del("admin_code_pending");
+  return c.json({ valid: true });
+});
+
+// ─── QUICK CHAT (OpenAI) ──────────────────────────────────────────────────────
+
+app.post("/make-server-cbe884d8/quick-chat/message", async (c) => {
+  const openaiKey = Deno.env.get("OPENAI_API_KEY");
+  if (!openaiKey) return c.json({ error: "OPENAI_API_KEY secret not set" }, 500);
+
+  const { messages } = await c.req.json();
+  if (!Array.isArray(messages)) return c.json({ error: "messages array required" }, 400);
+
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${openaiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a friendly, concise customer support assistant for ShopWisely — a premium fashion and apparel online store. Help with orders, returns, product recommendations, sizing, shipping, and general questions. Keep responses warm and under 3 sentences unless more detail is needed.",
+        },
+        ...messages
+          .filter((m: any) => m.from !== "system")
+          .map((m: any) => ({
+            role: m.from === "admin" ? "assistant" : "user",
+            content: m.text,
+          })),
+      ],
+      max_tokens: 400,
+      temperature: 0.7,
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    return c.json({ error: (err as any).error?.message ?? "OpenAI request failed" }, 500);
+  }
+
+  const data = await res.json();
+  return c.json({ message: (data as any).choices[0].message.content });
+});
+
 Deno.serve(app.fetch);
