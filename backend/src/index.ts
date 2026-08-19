@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
-import * as kv from "./kv_store.tsx";
+import * as kv from "./kv_store.js";
 
 const app = new Hono();
 
@@ -182,7 +182,7 @@ app.post("/make-server-cbe884d8/admin/verify-code", async (c) => {
 // ─── QUICK CHAT (OpenAI) ──────────────────────────────────────────────────────
 
 app.post("/make-server-cbe884d8/quick-chat/message", async (c) => {
-  const openaiKey = deno.env.get("OPENAI_API_KEY");
+  const openaiKey = process.env.OPENAI_API_KEY;
   if (!openaiKey) return c.json({ error: "OPENAI_API_KEY secret not set" }, 500);
 
   const { messages } = await c.req.json();
@@ -220,7 +220,9 @@ app.post("/make-server-cbe884d8/quick-chat/message", async (c) => {
   }
 
   const data = await res.json();
-  return c.json({ message: (data: unknown).choices[0].message.content });
+  return c.json({ message: (data as any).choices[0].message.content });
 });
 
-Deno.serve(app.fetch);
+import { serve } from "../node_modules/@hono/node-server/dist/index.cjs";
+
+serve(app);
