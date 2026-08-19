@@ -380,12 +380,13 @@ function DesktopSidebar({ current, onNavigate, cartCount, notifCount, user, onLo
   );
 }
 
-function DesktopTopBar({ current, onNavigate, cartCount, notifCount }: {
-  current: Page; onNavigate: (p: Page) => void; cartCount: number; notifCount: number;
+function DesktopTopBar({ current, onNavigate, cartCount, notifCount, userName, serverTime }: {
+  current: Page; onNavigate: (p: Page, id?: number) => void; cartCount: number; notifCount: number;
+  userName?: string; serverTime?: Date | null;
 }) {
   const [search, setSearch] = useState("");
   const pageLabel: Partial<Record<Page, string>> = {
-    home: "Welcome back, Alex 👋", category: "All Categories", search: "Search",
+    home: userName ? `Welcome back, ${userName} 👋` : "Welcome back, Alex 👋", category: "All Categories", search: "Search",
     product: "Product Details", wishlist: "Wishlist", cart: "Shopping Cart",
     orders: "My Orders", profile: "Profile", help: "Help Center",
     notifications: "Notifications", coupons: "Coupons", loyalty: "Loyalty",
@@ -561,7 +562,7 @@ interface SharedProps {
 
 // ── HOME PAGE ─────────────────────────────────────────────────────────────────
 
-function MobileHomePage({ onNavigate, onAddToCart, onToggleWishlist, wishlist, cartCount, userName }: SharedProps & { cartCount: number; userName: string }) {
+function MobileHomePage({ onNavigate, onAddToCart, onToggleWishlist, wishlist, cartCount, userName }: SharedProps & { cartCount: number; userName: string; serverTime: Date | null;}) {
   const [activeBanner, setActiveBanner] = useState(0);
   const banners = [
     { bg: "from-[#FF6B00] to-[#FF3D00]", title: "New Season", subtitle: "Up to 50% off selected styles" },
@@ -2002,7 +2003,7 @@ export default function App() {
       case "home":
         return isDesktop
           ? <DesktopHomePage {...shared} />
-          : <MobileHomePage {...shared} cartCount={cartCount} greeting={greeting} serverTime={serverTime} />;
+          : <MobileHomePage {...shared} cartCount={cartCount} userName={greeting} serverTime={serverTime} />;
       case "category":
         return <CategoryPage {...shared} isDesktop={isDesktop} onBack={() => navigate("home")} />;
       case "search":
@@ -2028,7 +2029,7 @@ export default function App() {
             : "help";
           return <SimplePage title={simplePagesMap[page]!} onBack={() => navigate(backPage)} isDesktop={isDesktop} onNavigate={navigate} />;
         }
-        return <MobileHomePage {...shared} cartCount={cartCount} greeting={greeting} serverTime={serverTime} />;
+        return <MobileHomePage {...shared} cartCount={cartCount} userName={greeting} serverTime={serverTime} />;
     }
   };
 
@@ -2042,7 +2043,7 @@ export default function App() {
         <>
           <DesktopSidebar current={page} onNavigate={navigate} cartCount={cartCount} notifCount={2} user={user} onLogout={handleLogout}
             isAdmin={isAdmin} onAdminAccess={() => setShowAdminModal(true)} onRevokeAdmin={() => { setIsAdmin(false); if (page === "quick-chat") navigate("home"); }} />
-          <DesktopTopBar current={page} onNavigate={navigate} cartCount={cartCount} notifCount={2} greeting={greeting} serverTime={serverTime} />
+          <DesktopTopBar current={page} onNavigate={navigate} cartCount={cartCount} notifCount={2} userName={greeting} serverTime={serverTime} />
           <DesktopContent>{renderContent()}</DesktopContent>
         </>
       ) : (
