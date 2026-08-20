@@ -430,8 +430,6 @@ function DesktopContent({ children }: { children: React.ReactNode }) {
 function AdminAccessModal({ onClose, onGrantAccess }: { onClose: () => void; onGrantAccess: () => void }) {
   const [step, setStep] = useState<1 | 2>(1);
   const [loading, setLoading] = useState(false);
-  const [serverCode, setServerCode] = useState("");
-  const [adminEmail, setAdminEmail] = useState("");
   const [inputCode, setInputCode] = useState("");
   const [codeError, setCodeError] = useState("");
   const [countdown, setCountdown] = useState(0);
@@ -448,12 +446,10 @@ function AdminAccessModal({ onClose, onGrantAccess }: { onClose: () => void; onG
     setCodeError("");
     try {
       const data = await api.admin.requestCode();
-      setServerCode(data.code);
-      setAdminEmail(data.adminEmail);
       setCountdown(data.expiresIn);
       setStep(2);
     } catch (e: any) {
-      setCodeError(e.message ?? "Failed to generate code. Try again.");
+      setCodeError(e.message ?? "Failed to send email. Try again.");
     } finally {
       setLoading(false);
     }
@@ -508,19 +504,22 @@ function AdminAccessModal({ onClose, onGrantAccess }: { onClose: () => void; onG
             <div className="w-12 h-12 bg-[#FF6B00]/15 rounded-xl flex items-center justify-center mb-4">
               <KeyRound size={22} className="text-[#FF6B00]" />
             </div>
-            <h2 className="text-lg font-bold text-foreground mb-1">Verify Identity</h2>
-            <p className="text-sm text-muted-foreground mb-1">Code sent to admin email:</p>
-            <p className="text-xs font-semibold text-[#FF6B00] mb-4 truncate">{adminEmail}</p>
+            <h2 className="text-lg font-bold text-foreground mb-1">Check Your Email</h2>
+            <p className="text-sm text-muted-foreground mb-4">A 6-digit code was sent to the admin email address. Enter it below to continue.</p>
 
-            {/* Code shown on screen — in production, remove this and use only email */}
-            <div className="bg-[#0F0F0F] border border-[#FF6B00]/30 rounded-xl p-4 mb-4 text-center">
-              <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-semibold mb-1.5">Access Code</p>
-              <p className="text-3xl font-black tracking-[0.35em] text-[#FF6B00]">{serverCode}</p>
-              {countdown > 0 && (
-                <p className="text-[10px] text-muted-foreground mt-1.5">Expires in {mmss}</p>
-              )}
-              {countdown === 0 && (
-                <p className="text-[10px] text-red-400 mt-1.5">Expired — go back and request a new code</p>
+            {/* Email sent confirmation */}
+            <div className="bg-[#0F0F0F] border border-border rounded-xl p-4 mb-4 flex items-center gap-3">
+              <div className="w-8 h-8 rounded-lg bg-[#FF6B00]/15 flex items-center justify-center flex-none">
+                <Mail size={15} className="text-[#FF6B00]" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-semibold text-foreground">Code sent successfully</p>
+                <p className="text-[11px] text-muted-foreground">j***@gmail.com</p>
+              </div>
+              {countdown > 0 ? (
+                <span className="text-[11px] font-semibold text-[#FF6B00] flex-none">{mmss}</span>
+              ) : (
+                <span className="text-[11px] text-red-400 flex-none">Expired</span>
               )}
             </div>
 
@@ -532,8 +531,15 @@ function AdminAccessModal({ onClose, onGrantAccess }: { onClose: () => void; onG
               className="w-full bg-[#1A1A1A] border border-border rounded-xl px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-[#FF6B00] text-center tracking-[0.3em] transition-all"
             />
             {codeError && <p className="text-xs text-red-400 mt-2 text-center">{codeError}</p>}
-            <div className="flex gap-3 mt-4">
-              <button onClick={() => { setStep(1); setInputCode(""); setCodeError(""); setServerCode(""); }} disabled={loading}
+            {countdown === 0 && (
+              <button onClick={requestCode} disabled={loading}
+                className="w-full py-2 text-xs text-[#FF6B00] hover:text-[#E05F00] transition-colors flex items-center justify-center gap-1.5 mb-1">
+                <RefreshCw size={11} className={loading ? "animate-spin" : ""} />
+                Resend code
+              </button>
+            )}
+            <div className="flex gap-3 mt-2">
+              <button onClick={() => { setStep(1); setInputCode(""); setCodeError(""); }} disabled={loading}
                 className="flex-1 py-2.5 rounded-xl border border-border text-sm font-semibold text-muted-foreground hover:text-foreground hover:bg-[#1A1A1A] transition-colors disabled:opacity-50">
                 Back
               </button>

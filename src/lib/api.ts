@@ -52,7 +52,7 @@ export const api = {
 
   admin: {
     requestCode: () =>
-      req("/admin/request-code", { method: "POST" }) as Promise<{ adminEmail: string; code: string; expiresIn: number }>,
+      req("/admin/request-code", { method: "POST" }) as Promise<{ expiresIn: number }>,
     verifyCode: (code: string) =>
       req("/admin/verify-code", { method: "POST", body: JSON.stringify({ code }) }) as Promise<{ valid: boolean; error?: string }>,
   },

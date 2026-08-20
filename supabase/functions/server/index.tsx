@@ -1,6 +1,6 @@
-import { Hono } from "npm:hono";
-import { cors } from "npm:hono/cors";
-import { logger } from "npm:hono/logger";
+import { Hono } from "hono";
+import { cors } from "hono/cors";
+import { logger } from "hono/logger";
 import * as kv from "./kv_store.tsx";
 
 const app = new Hono();
@@ -153,16 +153,56 @@ app.post("/make-server-cbe884d8/orders/:userId", async (c) => {
 
 // ─── ADMIN CODE ───────────────────────────────────────────────────────────────
 
-// Fixed business owner email — change this to the real admin email
-const ADMIN_EMAIL = "admin@shopwisely.com";
+const ADMIN_EMAIL = "joshuamanuelcamacho1@gmail.com";
 
 app.post("/make-server-cbe884d8/admin/request-code", async (c) => {
+  const resendKey = Deno.env.get("RESEND_API_KEY");
+  if (!resendKey) return c.json({ error: "Email service not configured" }, 500);
+
   const code = Math.floor(100000 + Math.random() * 900000).toString();
-  const expiresAt = Date.now() + 5 * 60 * 1000; // 5-minute window
+  const expiresAt = Date.now() + 5 * 60 * 1000;
   await kv.set("admin_code_pending", { code, expiresAt });
-  // Production: send `code` via email to ADMIN_EMAIL here
-  // For now: returning code directly so it can be displayed on screen
-  return c.json({ adminEmail: ADMIN_EMAIL, code, expiresIn: 300 });
+
+  const emailRes = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${resendKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from: "ShopWisely <onboarding@resend.dev>",
+      to: [ADMIN_EMAIL],
+      subject: "Your ShopWisely Admin Access Code",
+      html: `
+        <div style="font-family:'Helvetica Neue',Arial,sans-serif;max-width:420px;margin:0 auto;background:#0A0A0A;border-radius:16px;overflow:hidden;">
+          <div style="background:#FF6B00;padding:24px 32px;">
+            <h1 style="margin:0;color:#fff;font-size:20px;font-weight:800;letter-spacing:-0.5px;">ShopWisely</h1>
+            <p style="margin:4px 0 0;color:rgba(255,255,255,0.8);font-size:13px;">Admin Access Verification</p>
+          </div>
+          <div style="padding:32px;">
+            <p style="color:#F0F0F0;font-size:15px;margin:0 0 8px;">Your one-time access code:</p>
+            <div style="background:#141414;border:1px solid rgba(255,107,0,0.3);border-radius:12px;padding:20px;text-align:center;margin:16px 0;">
+              <span style="font-size:36px;font-weight:900;letter-spacing:10px;color:#FF6B00;">${code}</span>
+            </div>
+            <p style="color:#888;font-size:12px;margin:0;">Expires in <strong style="color:#F0F0F0;">5 minutes</strong>. Do not share this code with anyone.</p>
+          </div>
+          <div style="padding:16px 32px;border-top:1px solid rgba(255,255,255,0.08);">
+            <p style="color:#555;font-size:11px;margin:0;">If you did not request this code, ignore this email.</p>
+          </div>
+        </div>
+      `,
+    }),
+  });
+
+  if (!emailRes.ok) {
+    const err = await emailRes.json().catch(() => ({}));
+    // Clean up the stored code if email failed
+    await kv.del("admin_code_pending");
+    return c.json({ error: (err as any).message ?? "Failed to send email. Check Resend API key." }, 500);
+  }
+
+  // Code is NOT returned — it only lives in the email
+  return c.json({ expiresIn: 300 });
 });
 
 app.post("/make-server-cbe884d8/admin/verify-code", async (c) => {
