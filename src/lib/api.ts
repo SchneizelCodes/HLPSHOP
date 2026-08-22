@@ -1,4 +1,5 @@
-const BASE = "https://dgbbwyztbqkystnjvkly.supabase.co/functions/v1/make-server-cbe884d8";
+const BASE = "https://dgbbwyztbqkystnjvkly.supabase.co/functions/v1/server" ;
+const ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRnYmJ3eXp0YnFreXN0bmp2a2x5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUxNDYxNDAsImV4cCI6MjEwMDcyMjE0MH0.Ba-VHsM8IIVWUKpjN9IBN_Uil9V2ZQj-farGjA_om6o";
 
 async function req(path: string, options?: RequestInit) {
   const res = await fetch(`${BASE}${path}`, {
