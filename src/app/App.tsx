@@ -7,7 +7,8 @@ import {
   X, Camera, ChevronDown, Clock, Tag, Award, Phone, Mail, Send, Eye, EyeOff,
   TrendingUp, Zap, ShoppingBag, Check, Wallet, Building2, Banknote, Edit2,
   Trash2, LogOut, Copy, ImageIcon, Share2, Grid, List, Lock, Globe,
-  Monitor, Smartphone, LayoutGrid, Shield, FileText, Bot, KeyRound, RefreshCw
+  Monitor, Smartphone, LayoutGrid, Shield, FileText, Bot, KeyRound, RefreshCw,
+  Users, Activity, PanelLeftOpen
 } from "lucide-react";
 
 // ─── GREETING + CLOCK HOOKS ───────────────────────────────────────────────────
@@ -52,7 +53,7 @@ type Page =
   | "orders" | "order-detail" | "tracking" | "rating" | "return"
   | "profile" | "account-settings" | "address-book" | "payment-methods" | "notifications"
   | "coupons" | "loyalty" | "help" | "faq" | "contact" | "live-chat"
-  | "about" | "shipping-policy" | "return-policy" | "privacy" | "terms" | "quick-chat";
+  | "about" | "shipping-policy" | "return-policy" | "privacy" | "terms" | "quick-chat" | "admin-dashboard";
 
 type LayoutMode = "mobile" | "desktop";
 
@@ -233,7 +234,7 @@ function MobileBottomNav({ current, onNavigate, cartCount }: { current: Page; on
     <nav className="fixed bottom-0 left-0 right-0 bg-[#111111] border-t border-border z-40">
       <div className="flex max-w-lg mx-auto">
         {items.map(({ icon: Icon, label, page, badge }) => {
-          const active = current === page || (page === "profile" && ["profile","account-settings","address-book","payment-methods","notifications","coupons","loyalty"].includes(current));
+          const active = current === page || (page === "profile" && ["profile", "account-settings", "address-book", "payment-methods", "notifications", "coupons", "loyalty"].includes(current));
           return (
             <button key={page} className={`flex-1 flex flex-col items-center gap-1 py-3 transition-colors ${active ? "text-[#FF6B00]" : "text-muted-foreground hover:text-foreground"}`}
               onClick={() => onNavigate(page)}>
@@ -331,6 +332,12 @@ function DesktopSidebar({ current, onNavigate, cartCount, notifCount, user, onLo
               <span className="flex-1">Quick Chat</span>
               <span className="w-1.5 h-1.5 bg-green-400 rounded-full flex-none" />
             </button>
+            <button
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 text-left ${current === "admin-dashboard" ? "bg-[#FF6B00]/15 text-[#FF6B00]" : "text-muted-foreground hover:text-foreground hover:bg-[#1A1A1A]"}`}
+              onClick={() => onNavigate("admin-dashboard")}>
+              <LayoutGrid size={17} />
+              <span className="flex-1">Dashboard</span>
+            </button>
           </>
         )}
       </nav>
@@ -380,8 +387,9 @@ function DesktopSidebar({ current, onNavigate, cartCount, notifCount, user, onLo
   );
 }
 
-function DesktopTopBar({ current, onNavigate, cartCount, notifCount }: {
+function DesktopTopBar({ current, onNavigate, cartCount, notifCount, greeting, serverTime }: {
   current: Page; onNavigate: (p: Page) => void; cartCount: number; notifCount: number;
+  greeting: string; serverTime: Date | null;
 }) {
   const [search, setSearch] = useState("");
   const pageLabel: Partial<Record<Page, string>> = {
@@ -567,7 +575,7 @@ interface SharedProps {
 
 // ── HOME PAGE ─────────────────────────────────────────────────────────────────
 
-function MobileHomePage({ onNavigate, onAddToCart, onToggleWishlist, wishlist, cartCount, userName }: SharedProps & { cartCount: number; userName: string }) {
+function MobileHomePage({ onNavigate, onAddToCart, onToggleWishlist, wishlist, cartCount, greeting, serverTime }: SharedProps & { cartCount: number; greeting: string; serverTime: Date | null; }) {
   const [activeBanner, setActiveBanner] = useState(0);
   const banners = [
     { bg: "from-[#FF6B00] to-[#FF3D00]", title: "New Season", subtitle: "Up to 50% off selected styles" },
@@ -582,7 +590,7 @@ function MobileHomePage({ onNavigate, onAddToCart, onToggleWishlist, wishlist, c
         <div className="flex items-center justify-between mb-3">
           <div>
             <p className="text-xs text-muted-foreground">Good morning,</p>
-            <h1 className="text-lg font-extrabold text-foreground leading-none">{userName} 👋</h1>
+            <h1 className="text-lg font-extrabold text-foreground leading-none">{greeting}</h1>
           </div>
           <div className="flex items-center gap-2">
             <button className="relative w-9 h-9 rounded-xl bg-muted flex items-center justify-center" onClick={() => onNavigate("notifications")}>
@@ -1238,7 +1246,7 @@ function NicknamePage({ user, onDone }: { user: User; onDone: (nickname: string)
     setLoading(true);
     try {
       await api.auth.setNickname(user.userId, nickname.trim());
-    } catch {}
+    } catch { }
     onDone(nickname.trim());
   };
 
@@ -1519,7 +1527,7 @@ function OrdersPage({ onNavigate, isDesktop, userId }: { onNavigate: (p: Page) =
     if (!userId) { setLoading(false); return; }
     api.orders.get(userId)
       .then(data => setOrders(Array.isArray(data) ? data : []))
-      .catch(() => {})
+      .catch(() => { })
       .finally(() => setLoading(false));
   }, [userId]);
 
@@ -1683,410 +1691,615 @@ function SimplePage({ title, onBack, isDesktop, onNavigate }: { title: string; o
   );
 }
 
-// ─── QUICK CHAT PAGE ──────────────────────────────────────────────────────────
+  // ─── ADMIN LAYOUT (sliding nav) ───────────────────────────────────────────────
 
-interface ChatMessage {
-  id: number; from: "admin" | "user" | "system"; text: string; time: string;
-}
+  const ADMIN_NAV_ITEMS = [
+    { icon: MessageCircle, label: "Quick Chat", page: "quick-chat" as Page },
+    { icon: LayoutGrid, label: "Dashboard", page: "admin-dashboard" as Page },
+  ];
 
-function QuickChatPage({ isDesktop, isAdmin }: { isDesktop: boolean; isAdmin: boolean }) {
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    { id: 1, from: "system", text: "ShopWisely AI Support — powered by OpenAI", time: "" },
-    { id: 2, from: "admin", text: "Hello! Welcome to ShopWisely support. How can I help you today?", time: "09:00" },
-  ]);
-  const [input, setInput] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  function AdminLayout({ children, current, onNavigate, isDesktop }: {
+    children: React.ReactNode; current: Page; onNavigate: (p: Page) => void; isDesktop: boolean;
+  }) {
+    const [expanded, setExpanded] = useState(false);
 
-  // Auto-scroll to bottom on new messages
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isLoading]);
-
-  const nowStr = () => {
-    const d = new Date();
-    return `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
-  };
-
-  const sendMessage = async () => {
-    const text = input.trim();
-    if (!text || isLoading) return;
-    setInput("");
-
-    const userMsg: ChatMessage = { id: Date.now(), from: "user", text, time: nowStr() };
-    const nextMessages = [...messages, userMsg];
-    setMessages(nextMessages);
-    setIsLoading(true);
-
-    try {
-      const chatHistory = nextMessages.filter(m => m.from !== "system");
-      const data = await api.quickChat.sendMessage(chatHistory);
-      setMessages(prev => [...prev, {
-        id: Date.now() + 1,
-        from: "admin",
-        text: data.message,
-        time: nowStr(),
-      }]);
-    } catch (e: any) {
-      setMessages(prev => [...prev, {
-        id: Date.now() + 1,
-        from: "system",
-        text: `AI error: ${e.message ?? "Unable to reach OpenAI. Check your API key."}`,
-        time: "",
-      }]);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  return (
-    <div className={`flex flex-col ${isDesktop ? "h-[calc(100vh-56px)]" : "h-screen"}`}>
-      {!isDesktop && <MobileTopBar title="Quick Chat" />}
-
-      {/* Chat header */}
-      <div className="flex-none px-4 py-3 border-b border-border bg-[#0F0F0F] flex items-center gap-3">
-        <div className="w-9 h-9 rounded-xl bg-[#FF6B00]/15 flex items-center justify-center flex-none">
-          <Bot size={18} className="text-[#FF6B00]" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-semibold text-foreground">AI Support Chat</p>
-          <p className="text-[11px] text-green-400 flex items-center gap-1">
-            <span className="w-1.5 h-1.5 bg-green-400 rounded-full inline-block" />
-            Connected · gpt-4o-mini
-          </p>
-        </div>
-        {isAdmin && (
-          <span className="flex-none text-[10px] bg-[#FF6B00]/15 text-[#FF6B00] border border-[#FF6B00]/25 px-2.5 py-1 rounded-full font-bold tracking-wide">
-            ADMIN
-          </span>
-        )}
-      </div>
-
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
-        {messages.map(msg =>
-          msg.from === "system" ? (
-            <div key={msg.id} className="flex justify-center">
-              <span className="text-[11px] text-muted-foreground bg-[#1A1A1A] border border-border px-3 py-1.5 rounded-full flex items-center gap-1.5">
-                <Bot size={11} />
-                {msg.text}
-              </span>
+    return (
+      <div className={`flex ${isDesktop ? "h-[calc(100vh-56px)]" : "h-[calc(100vh-4rem)]"}`}>
+        {/* Sliding Admin Nav */}
+        <div
+          onMouseEnter={() => setExpanded(true)}
+          onMouseLeave={() => setExpanded(false)}
+          style={{ width: expanded ? 192 : 48, transition: "width 200ms cubic-bezier(0.4,0,0.2,1)" }}
+          className="flex-none bg-[#080808] border-r border-border flex flex-col overflow-hidden z-20 relative"
+        >
+          {/* Header */}
+          <div className={`flex items-center gap-2.5 border-b border-border flex-none ${expanded ? "px-4 py-4" : "justify-center px-2 py-4"}`}>
+            <div className="w-6 h-6 bg-[#FF6B00] rounded-md flex items-center justify-center flex-none">
+              <Shield size={12} className="text-white" />
             </div>
-          ) : (
-            <div key={msg.id} className={`flex ${msg.from === "admin" ? "justify-start" : "justify-end"}`}>
-              {msg.from === "admin" && (
-                <div className="w-6 h-6 rounded-full bg-[#FF6B00]/20 flex items-center justify-center flex-none mr-2 mt-1">
-                  <Bot size={12} className="text-[#FF6B00]" />
-                </div>
-              )}
-              <div className={`max-w-[75%] px-4 py-2.5 rounded-2xl space-y-0.5 ${
-                msg.from === "admin"
-                  ? "bg-[#1E1E1E] border border-border text-foreground rounded-tl-sm"
-                  : "bg-[#FF6B00] text-white rounded-tr-sm"
-              }`}>
-                <p className="text-sm leading-snug">{msg.text}</p>
-                <p className={`text-[10px] ${msg.from === "admin" ? "text-muted-foreground" : "text-white/60"}`}>{msg.time}</p>
-              </div>
-            </div>
-          )
-        )}
+            {expanded && <span className="text-xs font-bold text-foreground whitespace-nowrap">Admin Panel</span>}
+          </div>
 
-        {/* Typing indicator */}
-        {isLoading && (
-          <div className="flex justify-start">
-            <div className="w-6 h-6 rounded-full bg-[#FF6B00]/20 flex items-center justify-center flex-none mr-2 mt-1">
-              <Bot size={12} className="text-[#FF6B00]" />
-            </div>
-            <div className="bg-[#1E1E1E] border border-border px-4 py-3 rounded-2xl rounded-tl-sm flex items-center gap-1">
-              <span className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
-              <span className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-              <span className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+          {/* Nav items */}
+          <nav className="flex-1 px-2 py-3 space-y-1">
+            {ADMIN_NAV_ITEMS.map(({ icon: Icon, label, page }) => {
+              const isActive = current === page;
+              return (
+                <button key={page} onClick={() => onNavigate(page)}
+                  className={`w-full flex items-center gap-3 py-2.5 rounded-xl transition-all duration-150 ${expanded ? "px-3 text-left" : "px-0 justify-center"} ${isActive ? "bg-[#FF6B00]/15 text-[#FF6B00]" : "text-muted-foreground hover:text-foreground hover:bg-[#1A1A1A]"}`}>
+                  <Icon size={16} className="flex-none" />
+                  {expanded && <span className="text-sm font-medium whitespace-nowrap">{label}</span>}
+                </button>
+              );
+            })}
+          </nav>
+
+          {/* Status footer */}
+          <div className={`flex-none border-t border-border px-2 py-3 ${expanded ? "" : "flex justify-center"}`}>
+            <div className={`flex items-center gap-2 ${expanded ? "px-3" : "justify-center"}`}>
+              <span className="w-1.5 h-1.5 bg-green-400 rounded-full flex-none animate-pulse" />
+              {expanded && <span className="text-[10px] text-muted-foreground whitespace-nowrap">Systems Online</span>}
             </div>
           </div>
-        )}
-
-        <div ref={bottomRef} />
-      </div>
-
-      {/* Input bar */}
-      <div className={`flex-none px-4 py-3 border-t border-border bg-background flex items-center gap-2.5 ${!isDesktop ? "mb-16" : ""}`}>
-        <input
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={e => e.key === "Enter" && sendMessage()}
-          placeholder={isLoading ? "AI is typing…" : "Type a message…"}
-          disabled={isLoading}
-          className="flex-1 bg-[#1A1A1A] border border-border rounded-xl px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-[#FF6B00] transition-all disabled:opacity-60"
-        />
-        <button onClick={sendMessage} disabled={!input.trim() || isLoading}
-          className="w-10 h-10 flex-none bg-[#FF6B00] rounded-xl flex items-center justify-center hover:bg-[#E05F00] transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-          <Send size={16} className="text-white" />
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ─── MAIN APP ─────────────────────────────────────────────────────────────────
-
-export default function App() {
-  const [layout, setLayout] = useState<LayoutMode>("mobile");
-  const [page, setPage] = useState<Page>("login");
-  const [productId, setProductId] = useState<number>(1);
-  const [user, setUser] = useState<User | null>(() => loadUser());
-  const [pendingNewUser, setPendingNewUser] = useState<User | null>(null);
-  const [cart, setCart] = useState<CartItem[]>([]);
-  const [wishlist, setWishlist] = useState<number[]>([]);
-  const [dataLoaded, setDataLoaded] = useState(false);
-  const [lastOrderId, setLastOrderId] = useState<string>("#ORD-000000");
-  // Pick a random greeting style once per session (0–4)
-  const [greetingStyle] = useState(() => Math.floor(Math.random() * 5));
-  const serverTime = useServerClock();
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [showAdminModal, setShowAdminModal] = useState(false);
-
-  // Load cart + wishlist from Supabase when user is available
-  const loadUserData = useCallback(async (u: User) => {
-    try {
-      const [cartData, wishlistData] = await Promise.all([
-        api.cart.get(u.userId),
-        api.wishlist.get(u.userId),
-      ]);
-      setCart(Array.isArray(cartData) ? cartData : []);
-      setWishlist(Array.isArray(wishlistData) ? wishlistData : []);
-    } catch { /* silent — offline fallback */ }
-    setDataLoaded(true);
-  }, []);
-
-  // On mount: restore session and load data
-  useEffect(() => {
-    const saved = loadUser();
-    if (saved) {
-      setUser(saved);
-      loadUserData(saved).then(() => setPage("home"));
-    } else {
-      setPage("login");
-      setDataLoaded(true);
-    }
-  }, []);
-
-  const handleLogin = async (u: User, isNew?: boolean) => {
-    if (isNew) {
-      // New account: go to nickname page before loading data
-      setPendingNewUser(u);
-      setPage("nickname");
-      return;
-    }
-    setUser(u);
-    saveUser(u);
-    await loadUserData(u);
-    setPage("home");
-  };
-
-  const handleNicknameDone = async (nickname: string) => {
-    if (!pendingNewUser) return;
-    const finalUser: User = { ...pendingNewUser, name: nickname };
-    setUser(finalUser);
-    saveUser(finalUser);
-    setPendingNewUser(null);
-    await loadUserData(finalUser);
-    setPage("home");
-  };
-
-  const handleLogout = () => {
-    clearUser();
-    setUser(null);
-    setCart([]);
-    setWishlist([]);
-    setPage("login");
-  };
-
-  const navigate = (p: Page, id?: number) => {
-    if (id) setProductId(id);
-    setPage(p);
-    window.scrollTo({ top: 0 });
-  };
-
-  // Cart mutations — optimistic update + Supabase sync
-  const addToCart = useCallback(async (product: Product) => {
-    const item: CartItem = { id: product.id, name: product.name, price: product.price, qty: 1, image: product.image, color: "Black", size: "M" };
-    setCart(prev => {
-      const existing = prev.find(i => i.id === product.id);
-      if (existing) return prev.map(i => i.id === product.id ? { ...i, qty: i.qty + 1 } : i);
-      return [...prev, item];
-    });
-    if (user) {
-      try { await api.cart.add(user.userId, item); } catch {}
-    }
-  }, [user]);
-
-  const updateQty = useCallback(async (id: number, qty: number) => {
-    setCart(prev => qty < 1 ? prev.filter(i => i.id !== id) : prev.map(i => i.id === id ? { ...i, qty } : i));
-    if (user) {
-      try {
-        if (qty < 1) await api.cart.remove(user.userId, id);
-        else await api.cart.update(user.userId, id, qty);
-      } catch {}
-    }
-  }, [user]);
-
-  const removeFromCart = useCallback(async (id: number) => {
-    setCart(prev => prev.filter(i => i.id !== id));
-    if (user) {
-      try { await api.cart.remove(user.userId, id); } catch {}
-    }
-  }, [user]);
-
-  // Wishlist mutations — optimistic + Supabase sync
-  const toggleWishlist = useCallback(async (id: number) => {
-    const isInList = wishlist.includes(id);
-    setWishlist(prev => isInList ? prev.filter(i => i !== id) : [...prev, id]);
-    if (user) {
-      try {
-        if (isInList) await api.wishlist.remove(user.userId, id);
-        else await api.wishlist.add(user.userId, id);
-      } catch {}
-    }
-  }, [user, wishlist]);
-
-  // Place order — saves to Supabase, clears cart
-  const placeOrder = useCallback(async () => {
-    const total = cart.reduce((s, i) => s + i.price * i.qty, 0);
-    if (user) {
-      try {
-        const order = await api.orders.create(user.userId, {
-          items: cart,
-          total,
-          address: "42 Sunset Blvd, Apt 8B, Los Angeles, CA 90028",
-          delivery: "Standard (5–7 days)",
-          payment: "Visa •••• 4242",
-        });
-        setLastOrderId(order.id);
-      } catch {}
-    }
-    setCart([]);
-    navigate("confirmation");
-  }, [user, cart]);
-
-  const cartCount = cart.reduce((s, i) => s + i.qty, 0);
-  const isDesktop = layout === "desktop";
-  const shared: SharedProps = { onNavigate: navigate, onAddToCart: addToCart, onToggleWishlist: toggleWishlist, wishlist };
-
-  const displayName = user?.name ?? "Guest";
-  const greetingHour = serverTime ? serverTime.getHours() : new Date().getHours();
-  const greeting = getGreeting(displayName, greetingHour, greetingStyle);
-
-  // Loading screen while restoring session
-  if (!dataLoaded) {
-    return (
-      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-4">
-        <div className="w-14 h-14 bg-[#FF6B00] rounded-2xl flex items-center justify-center">
-          <span className="text-white text-base font-black tracking-tight">SW</span>
         </div>
-        <p className="text-muted-foreground text-sm animate-pulse">Loading ShopWisely…</p>
+
+        {/* Page content */}
+        <div className="flex-1 overflow-hidden min-w-0">
+          {children}
+        </div>
       </div>
     );
   }
 
-  const fullscreenPages: Page[] = ["login", "nickname", "shipping-addr", "delivery", "payment", "order-review", "confirmation"];
-  const isFullscreen = fullscreenPages.includes(page);
+  // ─── ADMIN DASHBOARD PAGE ─────────────────────────────────────────────────────
 
-  const simplePagesMap: Partial<Record<Page, string>> = {
-    "order-detail": "Order Details", "tracking": "Order Tracking", "rating": "Write a Review",
-    "return": "Return / Refund", "account-settings": "Account Settings", "address-book": "Address Book",
-    "payment-methods": "Payment Methods", "notifications": "Notifications", "coupons": "Coupons",
-    "loyalty": "Loyalty & Rewards", "help": "Help Center", "faq": "FAQ", "contact": "Contact Us",
-    "live-chat": "Live Chat", "about": "About Us", "shipping-policy": "Shipping Policy",
-    "return-policy": "Return Policy", "privacy": "Privacy", "terms": "Terms & Conditions",
-  };
+  function AdminDashboardPage({ isDesktop }: { isDesktop: boolean }) {
+    const stats = [
+      { label: "Total Users", value: "1,284", change: "+12%", icon: Users, color: "text-blue-400", bg: "bg-blue-400/10" },
+      { label: "Active Chats", value: "8", change: "+3", icon: MessageCircle, color: "text-[#FF6B00]", bg: "bg-[#FF6B00]/10" },
+      { label: "Orders Today", value: "47", change: "+18%", icon: Package, color: "text-green-400", bg: "bg-green-400/10" },
+      { label: "Revenue", value: "$3,240", change: "+8%", icon: TrendingUp, color: "text-purple-400", bg: "bg-purple-400/10" },
+    ];
 
-  const renderContent = () => {
-    if (page === "login") return <LoginPage onNavigate={navigate} onLogin={handleLogin} />;
-    if (page === "nickname") return <NicknamePage user={pendingNewUser ?? { userId: "", email: "", name: "" }} onDone={handleNicknameDone} />;
+    const recentChats = [
+      { user: "Alex M.", message: "Where is my order #ORD-441?", time: "2m ago", status: "open" },
+      { user: "Sarah K.", message: "Can I return these shoes?", time: "15m ago", status: "open" },
+      { user: "James L.", message: "Thanks for the help!", time: "1h ago", status: "resolved" },
+      { user: "Mia C.", message: "Do you have size 8 in stock?", time: "2h ago", status: "resolved" },
+    ];
 
-    switch (page) {
-      case "home":
-        return isDesktop
-          ? <DesktopHomePage {...shared} />
-          : <MobileHomePage {...shared} cartCount={cartCount} greeting={greeting} serverTime={serverTime} />;
-      case "category":
-        return <CategoryPage {...shared} isDesktop={isDesktop} onBack={() => navigate("home")} />;
-      case "search":
-        return <SearchPage {...shared} isDesktop={isDesktop} />;
-      case "product":
-        return <ProductPage {...shared} productId={productId} isDesktop={isDesktop} />;
-      case "wishlist":
-        return <WishlistPage {...shared} isDesktop={isDesktop} />;
-      case "cart":
-        return <CartPage onNavigate={navigate} cart={cart} onUpdateQty={updateQty} onRemove={removeFromCart} isDesktop={isDesktop} />;
-      case "shipping-addr": return <ShippingAddrPage onNavigate={navigate} />;
-      case "delivery": return <DeliveryPage onNavigate={navigate} />;
-      case "payment": return <PaymentPage onNavigate={navigate} />;
-      case "order-review": return <OrderReviewPage onNavigate={navigate} cart={cart} onPlaceOrder={placeOrder} />;
-      case "confirmation": return <ConfirmationPage onNavigate={navigate} orderId={lastOrderId} />;
-      case "orders": return <OrdersPage onNavigate={navigate} isDesktop={isDesktop} userId={user?.userId} />;
-      case "profile": return <ProfilePage onNavigate={navigate} isDesktop={isDesktop} user={user} onLogout={handleLogout} />;
-      case "quick-chat": return <QuickChatPage isDesktop={isDesktop} isAdmin={isAdmin} />;
-      default:
-        if (simplePagesMap[page]) {
-          const backPage: Page = ["orders", "order-detail", "tracking", "rating", "return"].includes(page) ? "orders"
-            : ["account-settings", "address-book", "payment-methods", "notifications", "coupons", "loyalty"].includes(page) ? "profile"
-            : "help";
-          return <SimplePage title={simplePagesMap[page]!} onBack={() => navigate(backPage)} isDesktop={isDesktop} onNavigate={navigate} />;
-        }
-        return <MobileHomePage {...shared} cartCount={cartCount} greeting={greeting} serverTime={serverTime} />;
-    }
-  };
+    const recentOrders = [
+      { id: "#ORD-441", user: "Alex M.", amount: "$129.99", status: "To Ship" },
+      { id: "#ORD-440", user: "Sarah K.", amount: "$89.00", status: "Delivered" },
+      { id: "#ORD-439", user: "James L.", amount: "$249.00", status: "To Ship" },
+      { id: "#ORD-438", user: "Mia C.", amount: "$59.99", status: "Delivered" },
+    ];
 
-  return (
-    <div className="bg-background min-h-screen" style={{ fontFamily: "'Plus Jakarta Sans', 'Inter', sans-serif" }}>
-      {isFullscreen ? (
-        // Full-screen pages (checkout, login) have no shell
-        renderContent()
-      ) : isDesktop ? (
-        // Desktop: sidebar + top bar + content
-        <>
-          <DesktopSidebar current={page} onNavigate={navigate} cartCount={cartCount} notifCount={2} user={user} onLogout={handleLogout}
-            isAdmin={isAdmin} onAdminAccess={() => setShowAdminModal(true)} onRevokeAdmin={() => { setIsAdmin(false); if (page === "quick-chat") navigate("home"); }} />
-          <DesktopTopBar current={page} onNavigate={navigate} cartCount={cartCount} notifCount={2} greeting={greeting} serverTime={serverTime} />
-          <DesktopContent>{renderContent()}</DesktopContent>
-        </>
-      ) : (
-        // Mobile: centered column + bottom nav
-        <div className="max-w-lg mx-auto relative">
-          {renderContent()}
-          <MobileBottomNav current={page} onNavigate={navigate} cartCount={cartCount} />
+    return (
+      <div className="h-full overflow-y-auto">
+        <div className="p-6 space-y-5">
+          {/* Header */}
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-lg font-bold text-foreground">Admin Dashboard</h1>
+              <p className="text-xs text-muted-foreground mt-0.5">ShopWisely control center</p>
+            </div>
+            <span className="text-[10px] bg-[#FF6B00]/15 text-[#FF6B00] border border-[#FF6B00]/25 px-2.5 py-1 rounded-full font-bold tracking-wide">
+              ADMIN
+            </span>
+          </div>
+
+          {/* Stats */}
+          <div className="grid grid-cols-2 gap-3">
+            {stats.map(({ label, value, change, icon: Icon, color, bg }) => (
+              <div key={label} className="bg-card border border-border rounded-xl p-4">
+                <div className="flex items-start justify-between mb-3">
+                  <div className={`w-8 h-8 ${bg} rounded-lg flex items-center justify-center`}>
+                    <Icon size={15} className={color} />
+                  </div>
+                  <span className="text-[10px] text-green-400 font-bold">{change}</span>
+                </div>
+                <p className="text-xl font-black text-foreground leading-none">{value}</p>
+                <p className="text-[11px] text-muted-foreground mt-1">{label}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Two-col grid */}
+          <div className={`grid ${isDesktop ? "grid-cols-2" : "grid-cols-1"} gap-4`}>
+            {/* Recent Chats */}
+            <div className="bg-card border border-border rounded-xl overflow-hidden">
+              <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+                <p className="text-sm font-semibold text-foreground">Recent Chats</p>
+                <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
+              </div>
+              <div className="divide-y divide-border">
+                {recentChats.map((chat, i) => (
+                  <div key={i} className="px-4 py-3 flex items-start gap-3">
+                    <div className="w-7 h-7 rounded-full bg-[#FF6B00]/20 flex items-center justify-center flex-none">
+                      <span className="text-[10px] font-bold text-[#FF6B00]">{chat.user[0]}</span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-semibold text-foreground truncate">{chat.user}</p>
+                        <span className="text-[10px] text-muted-foreground flex-none">{chat.time}</span>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground truncate">{chat.message}</p>
+                    </div>
+                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full flex-none ${chat.status === "open" ? "bg-[#FF6B00]/15 text-[#FF6B00]" : "bg-muted text-muted-foreground"}`}>
+                      {chat.status}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Recent Orders */}
+            <div className="bg-card border border-border rounded-xl overflow-hidden">
+              <div className="px-4 py-3 border-b border-border">
+                <p className="text-sm font-semibold text-foreground">Recent Orders</p>
+              </div>
+              <div className="divide-y divide-border">
+                {recentOrders.map((order, i) => (
+                  <div key={i} className="px-4 py-3 flex items-center gap-3">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-foreground">{order.id}</p>
+                      <p className="text-[11px] text-muted-foreground">{order.user}</p>
+                    </div>
+                    <p className="text-xs font-bold text-foreground">{order.amount}</p>
+                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full flex-none ${order.status === "To Ship" ? "bg-[#FF6B00]/15 text-[#FF6B00]" : "bg-green-400/15 text-green-400"}`}>
+                      {order.status}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* System Status */}
+          <div className="bg-card border border-border rounded-xl p-4">
+            <p className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
+              <Activity size={14} className="text-green-400" />
+              System Status
+            </p>
+            <div className="space-y-2.5">
+              {[
+                { name: "OpenAI API", status: "operational" },
+                { name: "Resend Email", status: "operational" },
+                { name: "Supabase DB", status: "operational" },
+                { name: "Edge Functions", status: "operational" },
+              ].map(({ name, status }) => (
+                <div key={name} className="flex items-center justify-between">
+                  <p className="text-xs text-muted-foreground">{name}</p>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 bg-green-400 rounded-full" />
+                    <span className="text-[10px] text-green-400 font-medium">{status}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
-      )}
+      </div>
+    );
+  }
 
-      {/* Layout Toggle — always visible */}
-      <LayoutToggle mode={layout} onToggle={() => setLayout(l => l === "mobile" ? "desktop" : "mobile")} />
 
-      {/* Mobile: floating admin Quick Chat button (admin only) */}
-      {!isDesktop && isAdmin && !isFullscreen && (
-        <button
-          onClick={() => navigate("quick-chat")}
-          className="fixed bottom-24 right-4 z-40 w-12 h-12 bg-[#FF6B00] rounded-2xl shadow-lg flex items-center justify-center hover:bg-[#E05F00] transition-colors">
-          <MessageCircle size={20} className="text-white" />
-        </button>
-      )}
+  // ─── QUICK CHAT PAGE ──────────────────────────────────────────────────────────
 
-      {/* Mobile: admin access button (non-admin, non-fullscreen) */}
-      {!isDesktop && !isAdmin && !isFullscreen && (
-        <button
-          onClick={() => setShowAdminModal(true)}
-          className="fixed bottom-24 right-4 z-40 w-10 h-10 bg-[#1A1A1A] border border-border rounded-xl flex items-center justify-center hover:border-[#FF6B00]/40 transition-colors">
-          <Shield size={16} className="text-muted-foreground" />
-        </button>
-      )}
+  interface ChatMessage {
+    id: number; from: "admin" | "user" | "system"; text: string; time: string;
+  }
 
-      {/* Admin Access Modal */}
-      {showAdminModal && (
-        <AdminAccessModal
-          onClose={() => setShowAdminModal(false)}
-          onGrantAccess={() => { setIsAdmin(true); setShowAdminModal(false); }}
-        />
-      )}
-    </div>
-  );
-}
+  function QuickChatPage({ isDesktop, isAdmin }: { isDesktop: boolean; isAdmin: boolean }) {
+    const [messages, setMessages] = useState<ChatMessage[]>([
+      { id: 1, from: "system", text: "ShopWisely AI Support — powered by OpenAI", time: "" },
+      { id: 2, from: "admin", text: "Hello! Welcome to ShopWisely support. How can I help you today?", time: "09:00" },
+    ]);
+    const [input, setInput] = useState("");
+    const [isLoading, setIsLoading] = useState(false);
+    const bottomRef = useRef<HTMLDivElement>(null);
+
+    // Auto-scroll to bottom on new messages
+    useEffect(() => {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }, [messages, isLoading]);
+
+    const nowStr = () => {
+      const d = new Date();
+      return `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
+    };
+
+    const sendMessage = async () => {
+      const text = input.trim();
+      if (!text || isLoading) return;
+      setInput("");
+
+      const userMsg: ChatMessage = { id: Date.now(), from: "user", text, time: nowStr() };
+      const nextMessages = [...messages, userMsg];
+      setMessages(nextMessages);
+      setIsLoading(true);
+
+      try {
+        const chatHistory = nextMessages.filter(m => m.from !== "system");
+        const data = await api.quickChat.sendMessage(chatHistory);
+        setMessages(prev => [...prev, {
+          id: Date.now() + 1,
+          from: "admin",
+          text: data.message,
+          time: nowStr(),
+        }]);
+      } catch (e: any) {
+        setMessages(prev => [...prev, {
+          id: Date.now() + 1,
+          from: "system",
+          text: `AI error: ${e.message ?? "Unable to reach OpenAI. Check your API key."}`,
+          time: "",
+        }]);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    return (
+      <div className="flex flex-col h-full">
+        {!isDesktop && <MobileTopBar title="Quick Chat" />}
+
+        {/* Chat header */}
+        <div className="flex-none px-4 py-3 border-b border-border bg-[#0F0F0F] flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-[#FF6B00]/15 flex items-center justify-center flex-none">
+            <Bot size={18} className="text-[#FF6B00]" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-foreground">AI Support Chat</p>
+            <p className="text-[11px] text-green-400 flex items-center gap-1">
+              <span className="w-1.5 h-1.5 bg-green-400 rounded-full inline-block" />
+              Connected · gpt-4o-mini
+            </p>
+          </div>
+          {isAdmin && (
+            <span className="flex-none text-[10px] bg-[#FF6B00]/15 text-[#FF6B00] border border-[#FF6B00]/25 px-2.5 py-1 rounded-full font-bold tracking-wide">
+              ADMIN
+            </span>
+          )}
+        </div>
+
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+          {messages.map(msg =>
+            msg.from === "system" ? (
+              <div key={msg.id} className="flex justify-center">
+                <span className="text-[11px] text-muted-foreground bg-[#1A1A1A] border border-border px-3 py-1.5 rounded-full flex items-center gap-1.5">
+                  <Bot size={11} />
+                  {msg.text}
+                </span>
+              </div>
+            ) : (
+              <div key={msg.id} className={`flex ${msg.from === "admin" ? "justify-start" : "justify-end"}`}>
+                {msg.from === "admin" && (
+                  <div className="w-6 h-6 rounded-full bg-[#FF6B00]/20 flex items-center justify-center flex-none mr-2 mt-1">
+                    <Bot size={12} className="text-[#FF6B00]" />
+                  </div>
+                )}
+                <div className={`max-w-[75%] px-4 py-2.5 rounded-2xl space-y-0.5 ${msg.from === "admin"
+                    ? "bg-[#1E1E1E] border border-border text-foreground rounded-tl-sm"
+                    : "bg-[#FF6B00] text-white rounded-tr-sm"
+                  }`}>
+                  <p className="text-sm leading-snug">{msg.text}</p>
+                  <p className={`text-[10px] ${msg.from === "admin" ? "text-muted-foreground" : "text-white/60"}`}>{msg.time}</p>
+                </div>
+              </div>
+            )
+          )}
+
+          {/* Typing indicator */}
+          {isLoading && (
+            <div className="flex justify-start">
+              <div className="w-6 h-6 rounded-full bg-[#FF6B00]/20 flex items-center justify-center flex-none mr-2 mt-1">
+                <Bot size={12} className="text-[#FF6B00]" />
+              </div>
+              <div className="bg-[#1E1E1E] border border-border px-4 py-3 rounded-2xl rounded-tl-sm flex items-center gap-1">
+                <span className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                <span className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                <span className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+              </div>
+            </div>
+          )}
+
+          <div ref={bottomRef} />
+        </div>
+
+        {/* Input bar */}
+        <div className={`flex-none px-4 py-3 border-t border-border bg-background flex items-center gap-2.5 ${!isDesktop ? "mb-16" : ""}`}>
+          <input
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && sendMessage()}
+            placeholder={isLoading ? "AI is typing…" : "Type a message…"}
+            disabled={isLoading}
+            className="flex-1 bg-[#1A1A1A] border border-border rounded-xl px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-[#FF6B00] transition-all disabled:opacity-60"
+          />
+          <button onClick={sendMessage} disabled={!input.trim() || isLoading}
+            className="w-10 h-10 flex-none bg-[#FF6B00] rounded-xl flex items-center justify-center hover:bg-[#E05F00] transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+            <Send size={16} className="text-white" />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+
+  // ─── MAIN APP ─────────────────────────────────────────────────────────────────
+
+  export default function App() {
+    const [layout, setLayout] = useState<LayoutMode>("mobile");
+    const [page, setPage] = useState<Page>("login");
+    const [productId, setProductId] = useState<number>(1);
+    const [user, setUser] = useState<User | null>(() => loadUser());
+    const [pendingNewUser, setPendingNewUser] = useState<User | null>(null);
+    const [cart, setCart] = useState<CartItem[]>([]);
+    const [wishlist, setWishlist] = useState<number[]>([]);
+    const [dataLoaded, setDataLoaded] = useState(false);
+    const [lastOrderId, setLastOrderId] = useState<string>("#ORD-000000");
+    // Pick a random greeting style once per session (0–4)
+    const [greetingStyle] = useState(() => Math.floor(Math.random() * 5));
+    const serverTime = useServerClock();
+    const [isAdmin, setIsAdmin] = useState(false);
+    const [showAdminModal, setShowAdminModal] = useState(false);
+
+    // Load cart + wishlist from Supabase when user is available
+    const loadUserData = useCallback(async (u: User) => {
+      try {
+        const [cartData, wishlistData] = await Promise.all([
+          api.cart.get(u.userId),
+          api.wishlist.get(u.userId),
+        ]);
+        setCart(Array.isArray(cartData) ? cartData : []);
+        setWishlist(Array.isArray(wishlistData) ? wishlistData : []);
+      } catch { /* silent — offline fallback */ }
+      setDataLoaded(true);
+    }, []);
+
+    // On mount: restore session and load data
+    useEffect(() => {
+      const saved = loadUser();
+      if (saved) {
+        setUser(saved);
+        loadUserData(saved).then(() => setPage("home"));
+      } else {
+        setPage("login");
+        setDataLoaded(true);
+      }
+    }, []);
+
+    const handleLogin = async (u: User, isNew?: boolean) => {
+      if (isNew) {
+        // New account: go to nickname page before loading data
+        setPendingNewUser(u);
+        setPage("nickname");
+        return;
+      }
+      setUser(u);
+      saveUser(u);
+      await loadUserData(u);
+      setPage("home");
+    };
+
+    const handleNicknameDone = async (nickname: string) => {
+      if (!pendingNewUser) return;
+      const finalUser: User = { ...pendingNewUser, name: nickname };
+      setUser(finalUser);
+      saveUser(finalUser);
+      setPendingNewUser(null);
+      await loadUserData(finalUser);
+      setPage("home");
+    };
+
+    const handleLogout = () => {
+      clearUser();
+      setUser(null);
+      setCart([]);
+      setWishlist([]);
+      setPage("login");
+    };
+
+    const navigate = (p: Page, id?: number) => {
+      if (id) setProductId(id);
+      setPage(p);
+      window.scrollTo({ top: 0 });
+    };
+
+    // Cart mutations — optimistic update + Supabase sync
+    const addToCart = useCallback(async (product: Product) => {
+      const item: CartItem = { id: product.id, name: product.name, price: product.price, qty: 1, image: product.image, color: "Black", size: "M" };
+      setCart(prev => {
+        const existing = prev.find(i => i.id === product.id);
+        if (existing) return prev.map(i => i.id === product.id ? { ...i, qty: i.qty + 1 } : i);
+        return [...prev, item];
+      });
+      if (user) {
+        try { await api.cart.add(user.userId, item); } catch { }
+      }
+    }, [user]);
+
+    const updateQty = useCallback(async (id: number, qty: number) => {
+      setCart(prev => qty < 1 ? prev.filter(i => i.id !== id) : prev.map(i => i.id === id ? { ...i, qty } : i));
+      if (user) {
+        try {
+          if (qty < 1) await api.cart.remove(user.userId, id);
+          else await api.cart.update(user.userId, id, qty);
+        } catch { }
+      }
+    }, [user]);
+
+    const removeFromCart = useCallback(async (id: number) => {
+      setCart(prev => prev.filter(i => i.id !== id));
+      if (user) {
+        try { await api.cart.remove(user.userId, id); } catch { }
+      }
+    }, [user]);
+
+    // Wishlist mutations — optimistic + Supabase sync
+    const toggleWishlist = useCallback(async (id: number) => {
+      const isInList = wishlist.includes(id);
+      setWishlist(prev => isInList ? prev.filter(i => i !== id) : [...prev, id]);
+      if (user) {
+        try {
+          if (isInList) await api.wishlist.remove(user.userId, id);
+          else await api.wishlist.add(user.userId, id);
+        } catch { }
+      }
+    }, [user, wishlist]);
+
+    // Place order — saves to Supabase, clears cart
+    const placeOrder = useCallback(async () => {
+      const total = cart.reduce((s, i) => s + i.price * i.qty, 0);
+      if (user) {
+        try {
+          const order = await api.orders.create(user.userId, {
+            items: cart,
+            total,
+            address: "42 Sunset Blvd, Apt 8B, Los Angeles, CA 90028",
+            delivery: "Standard (5–7 days)",
+            payment: "Visa •••• 4242",
+          });
+          setLastOrderId(order.id);
+        } catch { }
+      }
+      setCart([]);
+      navigate("confirmation");
+    }, [user, cart]);
+
+    const cartCount = cart.reduce((s, i) => s + i.qty, 0);
+    const isDesktop = layout === "desktop";
+    const shared: SharedProps = { onNavigate: navigate, onAddToCart: addToCart, onToggleWishlist: toggleWishlist, wishlist };
+
+    const displayName = user?.name ?? "Guest";
+    const greetingHour = serverTime ? serverTime.getHours() : new Date().getHours();
+    const greeting = getGreeting(displayName, greetingHour, greetingStyle);
+
+    // Loading screen while restoring session
+    if (!dataLoaded) {
+      return (
+        <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-4">
+          <div className="w-14 h-14 bg-[#FF6B00] rounded-2xl flex items-center justify-center">
+            <span className="text-white text-base font-black tracking-tight">SW</span>
+          </div>
+          <p className="text-muted-foreground text-sm animate-pulse">Loading ShopWisely…</p>
+        </div>
+      );
+    }
+
+    const fullscreenPages: Page[] = ["login", "nickname", "shipping-addr", "delivery", "payment", "order-review", "confirmation"];
+    const isFullscreen = fullscreenPages.includes(page);
+
+    const simplePagesMap: Partial<Record<Page, string>> = {
+      "order-detail": "Order Details", "tracking": "Order Tracking", "rating": "Write a Review",
+      "return": "Return / Refund", "account-settings": "Account Settings", "address-book": "Address Book",
+      "payment-methods": "Payment Methods", "notifications": "Notifications", "coupons": "Coupons",
+      "loyalty": "Loyalty & Rewards", "help": "Help Center", "faq": "FAQ", "contact": "Contact Us",
+      "live-chat": "Live Chat", "about": "About Us", "shipping-policy": "Shipping Policy",
+      "return-policy": "Return Policy", "privacy": "Privacy", "terms": "Terms & Conditions",
+    };
+
+    const renderContent = () => {
+      if (page === "login") return <LoginPage onNavigate={navigate} onLogin={handleLogin} />;
+      if (page === "nickname") return <NicknamePage user={pendingNewUser ?? { userId: "", email: "", name: "" }} onDone={handleNicknameDone} />;
+
+      switch (page) {
+        case "home":
+          return isDesktop
+            ? <DesktopHomePage {...shared} />
+            : <MobileHomePage {...shared} cartCount={cartCount} greeting={greeting} serverTime={serverTime} />;
+        case "category":
+          return <CategoryPage {...shared} isDesktop={isDesktop} onBack={() => navigate("home")} />;
+        case "search":
+          return <SearchPage {...shared} isDesktop={isDesktop} />;
+        case "product":
+          return <ProductPage {...shared} productId={productId} isDesktop={isDesktop} />;
+        case "wishlist":
+          return <WishlistPage {...shared} isDesktop={isDesktop} />;
+        case "cart":
+          return <CartPage onNavigate={navigate} cart={cart} onUpdateQty={updateQty} onRemove={removeFromCart} isDesktop={isDesktop} />;
+        case "shipping-addr": return <ShippingAddrPage onNavigate={navigate} />;
+        case "delivery": return <DeliveryPage onNavigate={navigate} />;
+        case "payment": return <PaymentPage onNavigate={navigate} />;
+        case "order-review": return <OrderReviewPage onNavigate={navigate} cart={cart} onPlaceOrder={placeOrder} />;
+        case "confirmation": return <ConfirmationPage onNavigate={navigate} orderId={lastOrderId} />;
+        case "orders": return <OrdersPage onNavigate={navigate} isDesktop={isDesktop} userId={user?.userId} />;
+        case "profile": return <ProfilePage onNavigate={navigate} isDesktop={isDesktop} user={user} onLogout={handleLogout} />;
+        case "quick-chat":
+          return (
+            <AdminLayout current={page} onNavigate={navigate} isDesktop={isDesktop}>
+              <QuickChatPage isDesktop={isDesktop} isAdmin={isAdmin} />
+            </AdminLayout>
+          );
+        case "admin-dashboard":
+          return (
+            <AdminLayout current={page} onNavigate={navigate} isDesktop={isDesktop}>
+              <AdminDashboardPage isDesktop={isDesktop} />
+            </AdminLayout>
+          );
+        default:
+          if (simplePagesMap[page]) {
+            const backPage: Page = ["orders", "order-detail", "tracking", "rating", "return"].includes(page) ? "orders"
+              : ["account-settings", "address-book", "payment-methods", "notifications", "coupons", "loyalty"].includes(page) ? "profile"
+                : "help";
+            return <SimplePage title={simplePagesMap[page]!} onBack={() => navigate(backPage)} isDesktop={isDesktop} onNavigate={navigate} />;
+          }
+          return <MobileHomePage {...shared} cartCount={cartCount} greeting={greeting} serverTime={serverTime} />;
+      }
+    };
+
+    return (
+      <div className="bg-background min-h-screen" style={{ fontFamily: "'Plus Jakarta Sans', 'Inter', sans-serif" }}>
+        {isFullscreen ? (
+          // Full-screen pages (checkout, login) have no shell
+          renderContent()
+        ) : isDesktop ? (
+          // Desktop: sidebar + top bar + content
+          <>
+            <DesktopSidebar current={page} onNavigate={navigate} cartCount={cartCount} notifCount={2} user={user} onLogout={handleLogout}
+              isAdmin={isAdmin} onAdminAccess={() => setShowAdminModal(true)} onRevokeAdmin={() => { setIsAdmin(false); if (page === "quick-chat") navigate("home"); }} />
+            <DesktopTopBar current={page} onNavigate={navigate} cartCount={cartCount} notifCount={2} greeting={greeting} serverTime={serverTime} />
+            <DesktopContent>{renderContent()}</DesktopContent>
+          </>
+        ) : (
+          // Mobile: centered column + bottom nav
+          <div className="max-w-lg mx-auto relative">
+            {renderContent()}
+            <MobileBottomNav current={page} onNavigate={navigate} cartCount={cartCount} />
+          </div>
+        )}
+
+        {/* Layout Toggle — always visible */}
+        <LayoutToggle mode={layout} onToggle={() => setLayout(l => l === "mobile" ? "desktop" : "mobile")} />
+
+        {/* Mobile: floating admin Quick Chat button (admin only) */}
+        {!isDesktop && isAdmin && !isFullscreen && (
+          <button
+            onClick={() => navigate("quick-chat")}
+            className="fixed bottom-24 right-4 z-40 w-12 h-12 bg-[#FF6B00] rounded-2xl shadow-lg flex items-center justify-center hover:bg-[#E05F00] transition-colors">
+            <MessageCircle size={20} className="text-white" />
+          </button>
+        )}
+
+        {/* Mobile: admin access button (non-admin, non-fullscreen) */}
+        {!isDesktop && !isAdmin && !isFullscreen && (
+          <button
+            onClick={() => setShowAdminModal(true)}
+            className="fixed bottom-24 right-4 z-40 w-10 h-10 bg-[#1A1A1A] border border-border rounded-xl flex items-center justify-center hover:border-[#FF6B00]/40 transition-colors">
+            <Shield size={16} className="text-muted-foreground" />
+          </button>
+        )}
+
+        {/* Admin Access Modal */}
+        {showAdminModal && (
+          <AdminAccessModal
+            onClose={() => setShowAdminModal(false)}
+            onGrantAccess={() => { setIsAdmin(true); setShowAdminModal(false); }}
+          />
+        )}
+      </div>
+    );
+  }
