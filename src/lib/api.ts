@@ -1,13 +1,24 @@
-const BASE = "https://dgbbwyztbqkystnjvkly.supabase.co/functions/v1/server" ;
-const ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRnYmJ3eXp0YnFreXN0bmp2a2x5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUxNDYxNDAsImV4cCI6MjEwMDcyMjE0MH0.Ba-VHsM8IIVWUKpjN9IBN_Uil9V2ZQj-farGjA_om6o";
+const BASE = "https://dgbbwyztbqkystnjvkly.supabase.co/functions/v1/server";
+const ANON_KEY = (import.meta.env.VITE_SUPABASE_ANON_KEY as string) ?? "";
 
 async function req(path: string, options?: RequestInit) {
   const res = await fetch(`${BASE}${path}`, {
     ...options,
-    headers: { "Content-Type": "application/json", ...options?.headers },
+    headers: {
+      "Content-Type": "application/json",
+      "apikey": ANON_KEY,
+      "Authorization": `Bearer ${ANON_KEY}`,
+      ...options?.headers,
+    },
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error ?? "Request failed");
+  const text = await res.text();
+  let data: any;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error(`Non-JSON response (${res.status}): ${text.slice(0, 200)}`);
+  }
+  if (!res.ok) throw new Error(data.error ?? data.message ?? "Request failed");
   return data;
 }
 

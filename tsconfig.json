@@ -16,5 +16,5 @@
     }
   },
   "include": ["src/**/*", "index.html"],
-  "exclude": ["node_modules", "supabase"]
+  "exclude": ["node_modules", "supabase", "src/imports"]
 }

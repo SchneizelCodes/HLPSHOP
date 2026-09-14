@@ -1,140 +1,262 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
-import * as kv from "./kv_store.tsx";
+import { createClient } from "@supabase/supabase-js";
 
-const app = new Hono();
+const app = new Hono().basePath("/server");
+
+const supabase = createClient(
+  Deno.env.get("SUPABASE_URL")!,
+  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+);
 
 app.use("*", logger(console.log));
 app.use("/*", cors({
   origin: "*",
-  allowHeaders: ["Content-Type", "Authorization"],
+  allowHeaders: ["Content-Type", "Authorization", "apikey"],
   allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   exposeHeaders: ["Content-Length"],
   maxAge: 600,
 }));
 
-app.get("/server/health", (c) => c.json({ status: "ok" }));
+app.get("/health", (c) => c.json({ status: "ok" }));
 
-// Server time endpoint
-app.get("/server/time", (c) => {
+app.get("/time", (c) => {
   return c.json({ iso: new Date().toISOString(), ts: Date.now() });
 });
 
-// Update nickname
-app.put("/server/auth/nickname/:userId", async (c) => {
-  const { userId } = c.req.param();
-  const { nickname } = await c.req.json();
-  if (!nickname?.trim()) return c.json({ error: "Nickname required" }, 400);
-  // Find and update the user record by userId
-  const all = await kv.getByPrefix("user:");
-  const userRecord = (all as any[]).find((u: any) => u?.userId === userId);
-  if (!userRecord) return c.json({ error: "User not found" }, 404);
-  userRecord.name = nickname.trim();
-  await kv.set(`user:${userRecord.email}`, userRecord);
-  return c.json({ userId, name: nickname.trim() });
-});
+// ─── TYPES ────────────────────────────────────────────────────────────────────
+
+interface CartItem {
+  id: number;
+  name: string;
+  price: number;
+  qty: number;
+  image: string;
+  color: string;
+  size: string;
+}
+
+interface OrderBody {
+  items: CartItem[];
+  total: number;
+  address: string;
+  delivery: string;
+  payment: string;
+}
+
+interface OrderRow {
+  id: string;
+  user_id: string;
+  items: CartItem[];
+  total: number;
+  address: string;
+  delivery: string;
+  payment: string;
+  status: string;
+  created_at: string;
+  estimated_delivery: string;
+}
+
+interface ChatMessage {
+  from: "admin" | "user" | "system";
+  text: string;
+  time: string;
+}
 
 // ─── AUTH ─────────────────────────────────────────────────────────────────────
 
-app.post("/server/auth/register", async (c) => {
-  const { email, name, password } = await c.req.json();
+app.post("/auth/register", async (c) => {
+  const { email, name, password } = await c.req.json<{ email: string; name: string; password: string }>();
   if (!email || !name || !password) return c.json({ error: "All fields required" }, 400);
-  const existing = await kv.get(`user:${email.toLowerCase()}`);
-  if (existing) return c.json({ error: "An account with this email already exists" }, 400);
+
   const userId = crypto.randomUUID();
-  await kv.set(`user:${email.toLowerCase()}`, { userId, email: email.toLowerCase(), name, password, createdAt: new Date().toISOString() });
+  const { error } = await supabase
+    .from("users")
+    .insert({ user_id: userId, email: email.toLowerCase(), name, password });
+
+  if (error) {
+    if (error.code === "23505") return c.json({ error: "An account with this email already exists" }, 400);
+    return c.json({ error: "Registration failed" }, 500);
+  }
+
   return c.json({ userId, email: email.toLowerCase(), name });
 });
 
-app.post("/server/auth/login", async (c) => {
-  const { email, password } = await c.req.json();
+app.post("/auth/login", async (c) => {
+  const { email, password } = await c.req.json<{ email: string; password: string }>();
   if (!email || !password) return c.json({ error: "Email and password required" }, 400);
-  const user = await kv.get(`user:${email.toLowerCase()}`);
-  if (!user || user.password !== password) return c.json({ error: "Invalid email or password" }, 401);
-  return c.json({ userId: user.userId, email: user.email, name: user.name });
+
+  const { data: user, error } = await supabase
+    .from("users")
+    .select("user_id, email, name, password")
+    .eq("email", email.toLowerCase())
+    .single<{ user_id: string; email: string; name: string; password: string }>();
+
+  if (error || !user || user.password !== password)
+    return c.json({ error: "Invalid email or password" }, 401);
+
+  return c.json({ userId: user.user_id, email: user.email, name: user.name });
+});
+
+app.put("/auth/nickname/:userId", async (c) => {
+  const { userId } = c.req.param();
+  const { nickname } = await c.req.json<{ nickname: string }>();
+  if (!nickname?.trim()) return c.json({ error: "Nickname required" }, 400);
+
+  const { error } = await supabase
+    .from("users")
+    .update({ name: nickname.trim() })
+    .eq("user_id", userId);
+
+  if (error) return c.json({ error: "User not found" }, 404);
+  return c.json({ userId, name: nickname.trim() });
 });
 
 // ─── CART ─────────────────────────────────────────────────────────────────────
 
-app.get("/server/cart/:userId", async (c) => {
+app.get("/cart/:userId", async (c) => {
   const { userId } = c.req.param();
-  const cart = await kv.get(`cart:${userId}`) ?? [];
-  return c.json(cart);
+  const { data } = await supabase
+    .from("carts")
+    .select("items")
+    .eq("user_id", userId)
+    .single<{ items: CartItem[] }>();
+  return c.json(data?.items ?? []);
 });
 
-app.post("/server/cart/:userId", async (c) => {
+app.post("/cart/:userId", async (c) => {
   const { userId } = c.req.param();
-  const item = await c.req.json();
-  const cart: any[] = await kv.get(`cart:${userId}`) ?? [];
+  const item = await c.req.json<CartItem>();
+
+  const { data: existing } = await supabase
+    .from("carts").select("items").eq("user_id", userId).single<{ items: CartItem[] }>();
+
+  const cart: CartItem[] = existing?.items ?? [];
   const idx = cart.findIndex((i) => i.id === item.id);
   if (idx >= 0) cart[idx].qty += 1;
   else cart.push({ ...item, qty: 1 });
-  await kv.set(`cart:${userId}`, cart);
+
+  await supabase.from("carts").upsert({ user_id: userId, items: cart });
   return c.json(cart);
 });
 
-app.put("/server/cart/:userId/:productId", async (c) => {
+app.put("/cart/:userId/:productId", async (c) => {
   const { userId, productId } = c.req.param();
-  const { qty } = await c.req.json();
-  let cart: any[] = await kv.get(`cart:${userId}`) ?? [];
+  const { qty } = await c.req.json<{ qty: number }>();
+
+  const { data: existing } = await supabase
+    .from("carts").select("items").eq("user_id", userId).single<{ items: CartItem[] }>();
+
+  let cart: CartItem[] = existing?.items ?? [];
   if (qty < 1) cart = cart.filter((i) => i.id !== Number(productId));
   else cart = cart.map((i) => i.id === Number(productId) ? { ...i, qty } : i);
-  await kv.set(`cart:${userId}`, cart);
+
+  await supabase.from("carts").upsert({ user_id: userId, items: cart });
   return c.json(cart);
 });
 
-app.delete("/server/cart/:userId/:productId", async (c) => {
+app.delete("/cart/:userId/:productId", async (c) => {
   const { userId, productId } = c.req.param();
-  const cart = ((await kv.get(`cart:${userId}`)) ?? []).filter((i: any) => i.id !== Number(productId));
-  await kv.set(`cart:${userId}`, cart);
+
+  const { data: existing } = await supabase
+    .from("carts").select("items").eq("user_id", userId).single<{ items: CartItem[] }>();
+
+  const cart = (existing?.items ?? []).filter((i) => i.id !== Number(productId));
+  await supabase.from("carts").upsert({ user_id: userId, items: cart });
   return c.json(cart);
 });
 
-app.delete("/server/cart/:userId", async (c) => {
+app.delete("/cart/:userId", async (c) => {
   const { userId } = c.req.param();
-  await kv.set(`cart:${userId}`, []);
+  await supabase.from("carts").upsert({ user_id: userId, items: [] });
   return c.json([]);
 });
 
 // ─── WISHLIST ─────────────────────────────────────────────────────────────────
 
-app.get("/server/wishlist/:userId", async (c) => {
+app.get("/wishlist/:userId", async (c) => {
   const { userId } = c.req.param();
-  const wishlist = await kv.get(`wishlist:${userId}`) ?? [];
-  return c.json(wishlist);
+  const { data } = await supabase
+    .from("wishlists").select("product_ids").eq("user_id", userId).single<{ product_ids: number[] }>();
+  return c.json(data?.product_ids ?? []);
 });
 
-app.post("/server/wishlist/:userId", async (c) => {
+app.post("/wishlist/:userId", async (c) => {
   const { userId } = c.req.param();
-  const { productId } = await c.req.json();
-  const wishlist: number[] = await kv.get(`wishlist:${userId}`) ?? [];
-  if (!wishlist.includes(productId)) wishlist.push(productId);
-  await kv.set(`wishlist:${userId}`, wishlist);
-  return c.json(wishlist);
+  const { productId } = await c.req.json<{ productId: number }>();
+
+  const { data: existing } = await supabase
+    .from("wishlists").select("product_ids").eq("user_id", userId).single<{ product_ids: number[] }>();
+
+  const ids: number[] = existing?.product_ids ?? [];
+  if (!ids.includes(productId)) ids.push(productId);
+
+  await supabase.from("wishlists").upsert({ user_id: userId, product_ids: ids });
+  return c.json(ids);
 });
 
-app.delete("/server/wishlist/:userId/:productId", async (c) => {
+app.delete("/wishlist/:userId/:productId", async (c) => {
   const { userId, productId } = c.req.param();
-  const wishlist = ((await kv.get(`wishlist:${userId}`)) ?? []).filter((id: number) => id !== Number(productId));
-  await kv.set(`wishlist:${userId}`, wishlist);
-  return c.json(wishlist);
+
+  const { data: existing } = await supabase
+    .from("wishlists").select("product_ids").eq("user_id", userId).single<{ product_ids: number[] }>();
+
+  const ids = (existing?.product_ids ?? []).filter((id) => id !== Number(productId));
+  await supabase.from("wishlists").upsert({ user_id: userId, product_ids: ids });
+  return c.json(ids);
 });
 
 // ─── ORDERS ───────────────────────────────────────────────────────────────────
 
-app.get("/server/orders/:userId", async (c) => {
-  const { userId } = c.req.param();
-  const orders = await kv.get(`orders:${userId}`) ?? [];
-  return c.json(orders);
+const mapOrder = (o: OrderRow) => ({
+  id: o.id,
+  items: o.items,
+  total: o.total,
+  address: o.address,
+  delivery: o.delivery,
+  payment: o.payment,
+  status: o.status,
+  createdAt: o.created_at,
+  estimatedDelivery: o.estimated_delivery,
 });
 
-app.post("/server/orders/:userId", async (c) => {
+app.get("/orders/:userId", async (c) => {
   const { userId } = c.req.param();
-  const body = await c.req.json();
-  const orders: any[] = await kv.get(`orders:${userId}`) ?? [];
+  const { data } = await supabase
+    .from("orders")
+    .select("*")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .returns<OrderRow[]>();
+  return c.json((data ?? []).map(mapOrder));
+});
+
+app.post("/orders/:userId", async (c) => {
+  const { userId } = c.req.param();
+  const body = await c.req.json<OrderBody>();
+
   const orderId = `#ORD-${Date.now().toString().slice(-6)}`;
-  const order = {
+  const estimatedDelivery = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+    .toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+
+  const { error } = await supabase.from("orders").insert({
+    id: orderId,
+    user_id: userId,
+    items: body.items,
+    total: body.total,
+    address: body.address,
+    delivery: body.delivery,
+    payment: body.payment,
+    status: "To Ship",
+    estimated_delivery: estimatedDelivery,
+  });
+
+  if (error) return c.json({ error: "Failed to create order" }, 500);
+
+  await supabase.from("carts").upsert({ user_id: userId, items: [] });
+
+  return c.json({
     id: orderId,
     items: body.items,
     total: body.total,
@@ -142,26 +264,22 @@ app.post("/server/orders/:userId", async (c) => {
     delivery: body.delivery,
     payment: body.payment,
     status: "To Ship",
-    createdAt: new Date().toISOString(),
-    estimatedDelivery: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
-  };
-  orders.unshift(order);
-  await kv.set(`orders:${userId}`, orders);
-  await kv.set(`cart:${userId}`, []);
-  return c.json(order);
+    estimatedDelivery,
+  });
 });
 
 // ─── ADMIN CODE ───────────────────────────────────────────────────────────────
 
 const ADMIN_EMAIL = "joshuamanuelcamacho1@gmail.com";
 
-app.post("/server/admin/request-code", async (c) => {
+app.post("/admin/request-code", async (c) => {
   const resendKey = Deno.env.get("RESEND_API_KEY");
   if (!resendKey) return c.json({ error: "Email service not configured" }, 500);
 
   const code = Math.floor(100000 + Math.random() * 900000).toString();
   const expiresAt = Date.now() + 5 * 60 * 1000;
-  await kv.set("admin_code_pending", { code, expiresAt });
+
+  await supabase.from("admin_codes").upsert({ singleton: "current", code, expires_at: expiresAt });
 
   const emailRes = await fetch("https://api.resend.com/emails", {
     method: "POST",
@@ -195,72 +313,79 @@ app.post("/server/admin/request-code", async (c) => {
   });
 
   if (!emailRes.ok) {
-    const err = await emailRes.json().catch(() => ({}));
-    // Clean up the stored code if email failed
-    await kv.del("admin_code_pending");
-    return c.json({ error: (err as any).message ?? "Failed to send email. Check Resend API key." }, 500);
+    const err = await emailRes.json().catch(() => ({ message: undefined })) as { message?: string };
+    await supabase.from("admin_codes").delete().eq("singleton", "current");
+    return c.json({ error: err.message ?? `Email send failed (${emailRes.status}). Check Resend API key.` }, 500);
   }
 
-  // Code is NOT returned — it only lives in the email
   return c.json({ expiresIn: 300 });
 });
 
-app.post("/server/admin/verify-code", async (c) => {
-  const { code } = await c.req.json();
+app.post("/admin/verify-code", async (c) => {
+  const { code } = await c.req.json<{ code: string }>();
   if (!code) return c.json({ valid: false, error: "Code required" }, 400);
-  const stored = await kv.get("admin_code_pending");
+
+  const { data: stored } = await supabase
+    .from("admin_codes")
+    .select("code, expires_at")
+    .eq("singleton", "current")
+    .single<{ code: string; expires_at: number }>();
+
   if (!stored) return c.json({ valid: false, error: "No active code — request a new one." }, 400);
-  if (Date.now() > stored.expiresAt) {
-    await kv.del("admin_code_pending");
+  if (Date.now() > stored.expires_at) {
+    await supabase.from("admin_codes").delete().eq("singleton", "current");
     return c.json({ valid: false, error: "Code expired — request a new one." }, 400);
   }
   if (code !== stored.code) return c.json({ valid: false, error: "Incorrect code." }, 400);
-  await kv.del("admin_code_pending");
+
+  await supabase.from("admin_codes").delete().eq("singleton", "current");
   return c.json({ valid: true });
 });
 
-// ─── QUICK CHAT (OpenAI) ──────────────────────────────────────────────────────
+// ─── QUICK CHAT (Gemini) ─────────────────────────────────────────────────────
 
-app.post("/server/quick-chat/message", async (c) => {
-  const openaiKey = Deno.env.get("OPENAI_API_KEY");
-  if (!openaiKey) return c.json({ error: "OPENAI_API_KEY secret not set" }, 500);
+interface GeminiResponse {
+  candidates: { content: { parts: { text: string }[] } }[];
+}
 
-  const { messages } = await c.req.json();
+app.post("/quick-chat/message", async (c) => {
+  const geminiKey = Deno.env.get("GEMINI_API_KEY");
+  if (!geminiKey) return c.json({ error: "GEMINI_API_KEY secret not set" }, 500);
+
+  const { messages } = await c.req.json<{ messages: ChatMessage[] }>();
   if (!Array.isArray(messages)) return c.json({ error: "messages array required" }, 400);
 
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${openaiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are a friendly, concise customer support assistant for ShopWisely — a premium fashion and apparel online store. Help with orders, returns, product recommendations, sizing, shipping, and general questions. Keep responses warm and under 3 sentences unless more detail is needed.",
+  const contents = messages
+    .filter((m) => m.from !== "system")
+    .map((m) => ({
+      role: m.from === "admin" ? "model" : "user",
+      parts: [{ text: m.text }],
+    }));
+
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${geminiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        system_instruction: {
+          parts: [{
+            text: "You are a friendly, concise customer support assistant for ShopWisely — a premium fashion and apparel online store. Help with orders, returns, product recommendations, sizing, shipping, and general questions. Keep responses warm and under 3 sentences unless more detail is needed.",
+          }],
         },
-        ...messages
-          .filter((m: any) => m.from !== "system")
-          .map((m: any) => ({
-            role: m.from === "admin" ? "assistant" : "user",
-            content: m.text,
-          })),
-      ],
-      max_tokens: 400,
-      temperature: 0.7,
-    }),
-  });
+        contents,
+        generationConfig: { maxOutputTokens: 400, temperature: 0.7 },
+      }),
+    },
+  );
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    return c.json({ error: (err as any).error?.message ?? "OpenAI request failed" }, 500);
+    const err = await res.json() as { error?: { message?: string } };
+    return c.json({ error: err.error?.message ?? "Gemini request failed" }, 500);
   }
 
-  const data = await res.json();
-  return c.json({ message: (data as any).choices[0].message.content });
+  const data = await res.json() as GeminiResponse;
+  return c.json({ message: data.candidates[0].content.parts[0].text });
 });
 
 Deno.serve(app.fetch);
