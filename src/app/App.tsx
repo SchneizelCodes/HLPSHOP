@@ -12,13 +12,12 @@ import {
 } from "../lib/api";
 import {
   Home, Search, ShoppingCart, Heart, User as UserIcon, ChevronRight, ChevronLeft, Star,
-  MapPin, Truck, CreditCard, CheckCircle, Package, RotateCcw, Settings,
-  Bell, Gift, HelpCircle, MessageCircle, Filter, Minus, Plus,
-  X, Clock, Tag, Award, Mail, Send, Eye, EyeOff,
-  TrendingUp, Zap, ShoppingBag, Check, Wallet, Building2, Banknote, Edit2,
-  Trash2, LogOut, Grid, List, Lock,
-  Monitor, Smartphone, LayoutGrid, Shield, FileText, Bot, KeyRound, RefreshCw,
-  Activity
+  CreditCard, CheckCircle, Package, Settings,
+  Bell, Gift, HelpCircle, MessageCircle, Minus, Plus,
+  X, Mail, Send, Eye, EyeOff,
+  TrendingUp, Zap, LogOut, Grid, List, Lock,
+  Monitor, Smartphone, LayoutGrid, Shield, Bot, RefreshCw,
+  Activity, KeyRound, Award, Check
 } from "lucide-react";
 import myImage from "../imports/logo.jpg";
 
@@ -70,7 +69,14 @@ interface CartItem {
   id: number; name: string; price: number; qty: number; image: string; color: string; size: string;
 }
 
-const CATEGORIES = ["All", "Shoes", "Tops", "Bottoms", "Outerwear", "Bags", "Accessories", "Watches"];
+interface SharedProps {
+  onNavigate: (p: Page, id?: number) => void;
+  onAddToCart: (p: Product) => void;
+  onToggleWishlist: (id: number) => void;
+  wishlist: number[];
+  products: Product[];
+  categories: string[];
+}
 
 // ─── SHARED UI ATOMS ──────────────────────────────────────────────────────────
 
@@ -555,17 +561,7 @@ function AdminAccessModal({ onClose, onGrantAccess }: { onClose: () => void; onG
 
 // ─── PAGE COMPONENTS ──────────────────────────────────────────────────────────
 
-interface SharedProps {
-  onNavigate: (p: Page, id?: number) => void;
-  onAddToCart: (p: Product) => void;
-  onToggleWishlist: (id: number) => void;
-  wishlist: number[];
-  products: Product[];
-}
-
-// ── HOME PAGE ─────────────────────────────────────────────────────────────────
-
-function MobileHomePage({ onNavigate, onAddToCart, onToggleWishlist, wishlist, products, greeting }: SharedProps & { cartCount: number; greeting: string; serverTime: Date | null }) {
+function MobileHomePage({ onNavigate, onAddToCart, onToggleWishlist, wishlist, products, categories, greeting }: SharedProps & { cartCount: number; greeting: string; serverTime: Date | null }) {
   const [activeBanner, setActiveBanner] = useState(0);
   const banners = [
     { bg: "from-[#FF6B00] to-[#FF3D00]", title: "New Season", subtitle: "Up to 50% off selected styles" },
@@ -615,13 +611,10 @@ function MobileHomePage({ onNavigate, onAddToCart, onToggleWishlist, wishlist, p
 
         <div>
           <SectionHeader title="Browse Categories" action="See All" onAction={() => onNavigate("category")} />
-          <div className="flex gap-3 overflow-x-auto pb-1" style={{ scrollbarWidth: "none" }}>
-            {[{ label: "Shoes", img: "photo-1542291026-7eec264c27ff" }, { label: "Bags", img: "photo-1548036328-c9fa89d128fa" }, { label: "Watches", img: "photo-1523275335684-37898b6baf30" }, { label: "Tops", img: "photo-1576566588028-4147f3842f27" }, { label: "Glasses", img: "photo-1572635196237-14b3f281503f" }].map(cat => (
-              <button key={cat.label} className="flex-none flex flex-col items-center gap-2 cursor-pointer" onClick={() => onNavigate("category")}>
-                <div className="w-16 h-16 rounded-2xl bg-[#1A1A1A] overflow-hidden border border-border">
-                  <img src={`https://images.unsplash.com/${cat.img}?w=80&h=80&fit=crop&auto=format`} alt={cat.label} className="w-full h-full object-cover" />
-                </div>
-                <span className="text-xs text-muted-foreground font-medium">{cat.label}</span>
+          <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: "none" }}>
+            {categories.filter(c => c !== "All").map(cat => (
+              <button key={cat} className="flex-none bg-[#1A1A1A] border border-border rounded-xl px-4 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground hover:border-[#FF6B00] cursor-pointer transition-colors" onClick={() => onNavigate("category")}>
+                {cat}
               </button>
             ))}
           </div>
@@ -677,7 +670,7 @@ function MobileHomePage({ onNavigate, onAddToCart, onToggleWishlist, wishlist, p
   );
 }
 
-function DesktopHomePage({ onNavigate, onAddToCart, onToggleWishlist, wishlist, products }: SharedProps) {
+function DesktopHomePage({ onNavigate, onAddToCart, onToggleWishlist, wishlist, products, categories }: SharedProps) {
   const [activeCategory, setActiveCategory] = useState("All");
   const filtered = activeCategory === "All" ? products : products.filter(p => p.category === activeCategory);
 
@@ -722,7 +715,7 @@ function DesktopHomePage({ onNavigate, onAddToCart, onToggleWishlist, wishlist, 
       <div>
         <SectionHeader title="Browse by Category" action="View All" onAction={() => onNavigate("category")} />
         <div className="flex gap-2 flex-wrap">
-          {CATEGORIES.map(cat => (
+          {categories.map(cat => (
             <button key={cat}
               className={`text-xs font-semibold px-4 py-2 rounded-full border transition-all cursor-pointer ${activeCategory === cat ? "bg-[#FF6B00] text-white border-[#FF6B00]" : "border-border text-muted-foreground hover:border-[rgba(255,107,0,0.4)] hover:text-foreground"}`}
               onClick={() => setActiveCategory(cat)}>
@@ -741,30 +734,11 @@ function DesktopHomePage({ onNavigate, onAddToCart, onToggleWishlist, wishlist, 
           ))}
         </div>
       </div>
-
-      <div className="grid grid-cols-3 gap-4">
-        {[
-          { icon: Zap, title: "Flash Deal", sub: "Ends in 3:42:15", color: "text-[#FF6B00]", bg: "bg-[#FF6B00]/10 border-[#FF6B00]/20" },
-          { icon: Truck, title: "Free Shipping", sub: "On orders over $100", color: "text-blue-400", bg: "bg-blue-400/10 border-blue-400/20" },
-          { icon: RotateCcw, title: "Easy Returns", sub: "30-day hassle-free returns", color: "text-green-400", bg: "bg-green-400/10 border-green-400/20" },
-        ].map(item => {
-          const Icon = item.icon;
-          return (
-            <div key={item.title} className={`border rounded-2xl p-5 flex items-center gap-4 ${item.bg}`}>
-              <Icon size={22} className={item.color} />
-              <div>
-                <p className="text-sm font-bold text-foreground">{item.title}</p>
-                <p className="text-xs text-muted-foreground">{item.sub}</p>
-              </div>
-            </div>
-          );
-        })}
-      </div>
     </div>
   );
 }
 
-function CategoryPage({ onNavigate, onAddToCart, onToggleWishlist, wishlist, products, isDesktop, onBack }: SharedProps & { isDesktop: boolean; onBack: () => void }) {
+function CategoryPage({ onNavigate, onAddToCart, onToggleWishlist, wishlist, products, categories, isDesktop, onBack }: SharedProps & { isDesktop: boolean; onBack: () => void }) {
   const [activeCategory, setActiveCategory] = useState("All");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const filtered = activeCategory === "All" ? products : products.filter(p => p.category === activeCategory);
@@ -796,7 +770,7 @@ function CategoryPage({ onNavigate, onAddToCart, onToggleWishlist, wishlist, pro
         )}
 
         <div className="flex gap-2 overflow-x-auto pb-3 mb-4" style={{ scrollbarWidth: "none" }}>
-          {CATEGORIES.map(cat => (
+          {categories.map(cat => (
             <button key={cat} className={`flex-none text-xs font-semibold px-3.5 py-2 rounded-full border transition-all cursor-pointer ${activeCategory === cat ? "bg-[#FF6B00] text-white border-[#FF6B00]" : "border-border text-muted-foreground hover:border-[rgba(255,107,0,0.4)]"}`}
               onClick={() => setActiveCategory(cat)}>{cat}</button>
           ))}
@@ -972,8 +946,6 @@ function ProductPage({ productId, onNavigate, onAddToCart, onToggleWishlist, wis
   );
 }
 
-// ─── SIMPLE PLACEHOLDER PAGES ────────────────────────────────────────────────
-
 function WishlistPage({ onNavigate, wishlist, onToggleWishlist, onAddToCart, products, isDesktop }: SharedProps & { isDesktop: boolean }) {
   const items = products.filter(p => wishlist.includes(p.id));
   return (
@@ -1043,15 +1015,6 @@ function CartPage({ onNavigate, cart, onUpdateQty, onRemove, isDesktop }: {
           </div>
         )}
       </div>
-    </div>
-  );
-}
-
-function GenericPage({ title, onBack, isDesktop, children }: { title: string; onBack: () => void; isDesktop: boolean; children: React.ReactNode }) {
-  return (
-    <div className={`${isDesktop ? "p-8" : "pb-24"} min-h-screen bg-background`}>
-      {!isDesktop && <MobileTopBar title={title} onBack={onBack} />}
-      <div className={isDesktop ? "max-w-2xl space-y-4" : "px-4 pt-4 space-y-4"}>{children}</div>
     </div>
   );
 }
@@ -1137,8 +1100,6 @@ function LoginPage({ onLogin }: { onNavigate: (p: Page) => void; onLogin: (user:
     </div>
   );
 }
-
-// Checkout Flows
 function CheckoutProgress({ step }: { step: number }) {
   const steps = ["Cart", "Address", "Delivery", "Payment", "Review"];
   return (
@@ -1355,7 +1316,18 @@ function AdminLayout({ children, current, onNavigate, isDesktop }: {
 
 // ─── ADMIN DASHBOARD PAGE (With Live Product CRUD) ─────────────────────────────
 
-function AdminDashboardPage({ products, onRefreshProducts }: { isDesktop: boolean; products: Product[]; onRefreshProducts: () => void }) {
+function AdminDashboardPage({
+  products,
+  onRefreshProducts,
+  categories,
+  onRefreshCategories,
+}: {
+  isDesktop: boolean;
+  products: Product[];
+  onRefreshProducts: () => void;
+  categories: string[];
+  onRefreshCategories: () => void;
+}) {
   const [loading, setLoading] = useState(true);
   const [salesData, setSalesData] = useState<{
     totalRevenue: number;
@@ -1377,6 +1349,10 @@ function AdminDashboardPage({ products, onRefreshProducts }: { isDesktop: boolea
   const [formCategory, setFormCategory] = useState("Shoes");
   const [formBadge, setFormBadge] = useState("");
   const [savingProduct, setSavingProduct] = useState(false);
+
+  // Category Manager State
+  const [newCatInput, setNewCatInput] = useState("");
+  const [catActionLoading, setCatActionLoading] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -1416,8 +1392,10 @@ function AdminDashboardPage({ products, onRefreshProducts }: { isDesktop: boolea
     setFormPrice("");
     setFormOriginalPrice("");
     setFormImage("");
-    setFormCategory("Shoes");
+    const defaultCat = categories.find(c => c !== "All") || "General";
+    setFormCategory(defaultCat);
     setFormBadge("");
+    setNewCatInput("");
     setIsModalOpen(true);
   };
 
@@ -1429,7 +1407,41 @@ function AdminDashboardPage({ products, onRefreshProducts }: { isDesktop: boolea
     setFormImage(p.image);
     setFormCategory(p.category);
     setFormBadge(p.badge || "");
+    setNewCatInput("");
     setIsModalOpen(true);
+  };
+
+  const handleAddCategory = async () => {
+    const trimmed = newCatInput.trim();
+    if (!trimmed) return;
+    setCatActionLoading(true);
+    try {
+      await api.categories.create(trimmed);
+      setFormCategory(trimmed);
+      setNewCatInput("");
+      onRefreshCategories();
+    } catch (err: any) {
+      alert(err.message ?? "Failed to add category");
+    } finally {
+      setCatActionLoading(false);
+    }
+  };
+
+  const handleDeleteCategory = async (catName: string) => {
+    if (!confirm(`Delete category "${catName}"?`)) return;
+    setCatActionLoading(true);
+    try {
+      await api.categories.delete(catName);
+      onRefreshCategories();
+      if (formCategory === catName) {
+        const fallback = categories.find(c => c !== "All" && c !== catName) || "General";
+        setFormCategory(fallback);
+      }
+    } catch (err: any) {
+      alert(err.message ?? "Failed to delete category");
+    } finally {
+      setCatActionLoading(false);
+    }
   };
 
   const handleSaveProduct = async () => {
@@ -1481,7 +1493,7 @@ function AdminDashboardPage({ products, onRefreshProducts }: { isDesktop: boolea
             <p className="text-xs text-muted-foreground mt-0.5">Live store telemetry, inventory, and catalog management</p>
           </div>
           <button
-            onClick={() => { loadData(); onRefreshProducts(); }}
+            onClick={() => { loadData(); onRefreshProducts(); onRefreshCategories(); }}
             disabled={loading}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-border bg-[#161616] text-xs font-semibold text-muted-foreground hover:text-foreground hover:border-[#FF6B00]/40 transition-colors cursor-pointer"
           >
@@ -1718,7 +1730,7 @@ function AdminDashboardPage({ products, onRefreshProducts }: { isDesktop: boolea
       {/* Product Add / Edit Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-card border border-border rounded-2xl w-full max-w-md p-6 space-y-4">
+          <div className="bg-card border border-border rounded-2xl w-full max-w-md p-6 space-y-4 max-h-[90vh] overflow-y-auto">
             <h3 className="text-base font-bold text-foreground">
               {editingProduct ? "Edit Product Details" : "Add New Store Product"}
             </h3>
@@ -1730,17 +1742,68 @@ function AdminDashboardPage({ products, onRefreshProducts }: { isDesktop: boolea
             </div>
             <Input label="Image URL or Unsplash ID" value={formImage} onChange={setFormImage} placeholder="https://... or photo-xxx" />
             
-            <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium text-foreground">Category</label>
+            {/* Category Select + Add/Delete Controls */}
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-medium text-foreground">Category</label>
+                <span className="text-[11px] text-muted-foreground">Select, add, or delete</span>
+              </div>
+              
               <select
                 value={formCategory}
                 onChange={(e) => setFormCategory(e.target.value)}
                 className="bg-[#1E1E1E] border border-border rounded-xl text-sm p-3 text-foreground focus:outline-none focus:border-[#FF6B00]"
               >
-                {CATEGORIES.filter((c) => c !== "All").map((c) => (
+                {categories.filter((c) => c !== "All").map((c) => (
                   <option key={c} value={c}>{c}</option>
                 ))}
               </select>
+
+              <div className="flex flex-wrap gap-1.5 pt-1 max-h-24 overflow-y-auto">
+                {categories.filter((c) => c !== "All").map((cat) => (
+                  <span
+                    key={cat}
+                    className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border ${
+                      formCategory === cat 
+                        ? "border-[#FF6B00] bg-[#FF6B00]/15 text-[#FF6B00]" 
+                        : "border-border bg-[#161616] text-muted-foreground"
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setFormCategory(cat)}
+                      className="cursor-pointer"
+                    >
+                      {cat}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteCategory(cat)}
+                      className="hover:text-red-400 text-muted-foreground/60 transition-colors cursor-pointer"
+                      title={`Remove ${cat}`}
+                    >
+                      <X size={12} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+
+              <div className="flex gap-2 mt-1">
+                <input
+                  value={newCatInput}
+                  onChange={(e) => setNewCatInput(e.target.value)}
+                  placeholder="New category name..."
+                  className="flex-1 bg-[#1A1A1A] border border-border rounded-xl px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-[#FF6B00]"
+                />
+                <button
+                  type="button"
+                  onClick={handleAddCategory}
+                  disabled={!newCatInput.trim() || catActionLoading}
+                  className="px-3 py-2 rounded-xl bg-[#222] hover:bg-[#2A2A2A] border border-border text-xs font-semibold text-foreground disabled:opacity-40 cursor-pointer"
+                >
+                  + Add
+                </button>
+              </div>
             </div>
 
             <Input label="Badge (Optional)" value={formBadge} onChange={setFormBadge} placeholder="e.g. Best Seller, New, Sale" />
@@ -1854,6 +1917,7 @@ export default function App() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [wishlist, setWishlist] = useState<number[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [categories, setCategories] = useState<string[]>(["All", "Shoes", "Tops", "Bottoms", "Outerwear", "Bags", "Accessories", "Watches"]);
   const [dataLoaded, setDataLoaded] = useState(false);
   const [lastOrderId, setLastOrderId] = useState<string>("#ORD-000000");
   const [greetingStyle] = useState(() => Math.floor(Math.random() * 5));
@@ -1861,7 +1925,6 @@ export default function App() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [showAdminModal, setShowAdminModal] = useState(false);
 
-  // 1. Fetch live products from Supabase catalog
   const fetchProducts = useCallback(async () => {
     try {
       const list = await api.products.getAll();
@@ -1871,7 +1934,17 @@ export default function App() {
     }
   }, []);
 
-  // 2. Load user cart and wishlist
+  const fetchCategories = useCallback(async () => {
+    try {
+      const list = await api.categories.getAll();
+      if (Array.isArray(list) && list.length > 0) {
+        setCategories(["All", ...list.filter(c => c !== "All")]);
+      }
+    } catch (e) {
+      console.error("Failed to load categories", e);
+    }
+  }, []);
+
   const loadUserData = useCallback(async (u: User) => {
     try {
       const [cartData, wishlistData] = await Promise.all([
@@ -1884,9 +1957,9 @@ export default function App() {
     setDataLoaded(true);
   }, []);
 
-  // 3. Initialize App
   useEffect(() => {
     fetchProducts();
+    fetchCategories();
     const saved = loadUser();
     if (saved) {
       setUser(saved);
@@ -1895,7 +1968,7 @@ export default function App() {
       setPage("login");
       setDataLoaded(true);
     }
-  }, [fetchProducts, loadUserData]);
+  }, [fetchProducts, fetchCategories, loadUserData]);
 
   const handleLogin = async (u: User, isNew?: boolean) => {
     if (isNew) {
@@ -1993,7 +2066,14 @@ export default function App() {
 
   const cartCount = cart.reduce((s, i) => s + i.qty, 0);
   const isDesktop = layout === "desktop";
-  const shared: SharedProps = { onNavigate: navigate, onAddToCart: addToCart, onToggleWishlist: toggleWishlist, wishlist, products };
+  const shared: SharedProps = { 
+    onNavigate: navigate, 
+    onAddToCart: addToCart, 
+    onToggleWishlist: toggleWishlist, 
+    wishlist, 
+    products,
+    categories
+  };
 
   const displayName = user?.name ?? "Guest";
   const greetingHour = serverTime ? serverTime.getHours() : new Date().getHours();
@@ -2046,7 +2126,13 @@ export default function App() {
       case "admin-dashboard":
         return (
           <AdminLayout current={page} onNavigate={navigate} isDesktop={isDesktop}>
-            <AdminDashboardPage isDesktop={isDesktop} products={products} onRefreshProducts={fetchProducts} />
+            <AdminDashboardPage
+              isDesktop={isDesktop}
+              products={products}
+              onRefreshProducts={fetchProducts}
+              categories={categories}
+              onRefreshCategories={fetchCategories}
+            />
           </AdminLayout>
         );
       default:

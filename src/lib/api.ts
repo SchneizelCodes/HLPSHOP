@@ -189,6 +189,19 @@ wishlist: {
     },
   },
 
+  categories: {
+    getAll: () => req("/categories") as Promise<string[]>,
+    create: (name: string) =>
+      req("/admin/categories", {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      }) as Promise<{ name: string }>,
+    delete: (name: string) =>
+      req(`/admin/categories/${encodeURIComponent(name)}`, {
+        method: "DELETE",
+      }) as Promise<{ success: boolean }>,
+  },
+
   products: {
     getAll: (params?: { q?: string; category?: string }) => {
       const qs = params ? `?${new URLSearchParams(params as Record<string, string>).toString()}` : "";

@@ -266,6 +266,40 @@ app.get("/logs", async (c) => {
   return c.json(data);
 });
 
+// ─── CATEGORIES CRUD ─────────────────────────────────────────────────────────
+
+app.get("/categories", async (c) => {
+  const { data, error } = await supabase
+    .from("categories")
+    .select("name")
+    .order("id", { ascending: true });
+  if (error) return c.json({ error: error.message }, 500);
+  return c.json(data.map((row) => row.name));
+});
+
+app.post("/admin/categories", async (c) => {
+  const { name } = await c.req.json<{ name: string }>();
+  if (!name?.trim()) return c.json({ error: "Category name required" }, 400);
+
+  const { data, error } = await supabase
+    .from("categories")
+    .insert({ name: name.trim() })
+    .select()
+    .single();
+  if (error) return c.json({ error: error.message }, 500);
+  return c.json(data);
+});
+
+app.delete("/admin/categories/:name", async (c) => {
+  const name = c.req.param("name");
+  const { error } = await supabase
+    .from("categories")
+    .delete()
+    .eq("name", name);
+  if (error) return c.json({ error: error.message }, 500);
+  return c.json({ success: true });
+});
+
 // ─── ADMIN OPERATIONS COPILOT (Gemini + DB Context) ───────────────────────────
 
 interface GeminiResponse {
