@@ -3,8 +3,130 @@ import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { createClient } from "@supabase/supabase-js";
 
-// DO NOT chain .basePath("/server") here.
-// Supabase's gateway strips or prefixes the function slug automatically.
+// ─── DOMAIN SCHEMAS & DTOs ────────────────────────────────────────────────────
+
+interface UserRecord {
+  user_id: string;
+  email: string;
+  name: string;
+  password?: string;
+}
+
+interface AdminCodeRecord {
+  singleton: string;
+  code: string;
+  expires_at: number;
+}
+
+interface CartItemDTO {
+  id: number;
+  name: string;
+  price: number;
+  qty: number;
+  image: string;
+  color: string;
+  size: string;
+  category?: string;
+}
+
+interface CartRecord {
+  user_id: string;
+  items: CartItemDTO[];
+  updated_at: string;
+}
+
+interface WishlistRecord {
+  user_id: string;
+  product_ids: number[];
+  updated_at: string;
+}
+
+interface OrderRecord {
+  id: string;
+  user_id: string;
+  items: CartItemDTO[];
+  amount: number;
+  status: string;
+  category: string;
+  created_at: string;
+}
+
+interface InventoryRecord {
+  sku: string;
+  name: string;
+  stock_level: number;
+  reorder_point: number;
+  warehouse_id: string;
+  updated_at?: string;
+}
+
+interface TransactionLogRecord {
+  id?: string;
+  event_type: string;
+  payload: Record<string, unknown>;
+  status: "success" | "failed" | "pending";
+  actor_id: string | null;
+  created_at?: string;
+}
+
+interface CategoryRecord {
+  id: number;
+  name: string;
+}
+
+interface ProductRecord {
+  id: number;
+  name: string;
+  price: number;
+  original_price: number;
+  rating: number;
+  reviews: number;
+  image: string;
+  category: string;
+  badge: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+interface ChatMessageDTO {
+  id?: number;
+  from: "admin" | "assistant" | "user" | "system";
+  text: string;
+  time?: string;
+}
+
+interface ChatHistoryRecord {
+  id: string;
+  session_name: string;
+  messages: ChatMessageDTO[];
+  created_at: string;
+  updated_at: string;
+}
+
+interface GeminiContentPart {
+  text: string;
+}
+
+interface GeminiCandidate {
+  content?: {
+    parts?: GeminiContentPart[];
+  };
+}
+
+interface GeminiResponse {
+  candidates?: GeminiCandidate[];
+  error?: {
+    message?: string;
+  };
+}
+
+interface ResendErrorResponse {
+  message?: string;
+}
+
+// ─── APP SETUP ────────────────────────────────────────────────────────────────
+
+const root = new Hono();
 const app = new Hono();
 
 const supabase = createClient(
@@ -12,8 +134,8 @@ const supabase = createClient(
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
 );
 
-app.use("*", logger(console.log));
-app.use(
+root.use("*", logger(console.log));
+root.use(
   "*",
   cors({
     origin: "*",
@@ -24,14 +146,8 @@ app.use(
   }),
 );
 
-// Fallback for browser preflight OPTIONS requests
-app.options("*", (c) => c.body(null, 204));
-
 app.get("/health", (c) => c.json({ status: "ok" }));
-
-app.get("/time", (c) => {
-  return c.json({ iso: new Date().toISOString(), ts: Date.now() });
-});
+app.get("/time", (c) => c.json({ iso: new Date().toISOString(), ts: Date.now() }));
 
 // ─── AUTH ─────────────────────────────────────────────────────────────────────
 
@@ -60,13 +176,29 @@ app.post("/auth/login", async (c) => {
     .from("users")
     .select("user_id, email, name, password")
     .eq("email", email.toLowerCase())
-    .single<{ user_id: string; email: string; name: string; password: string }>();
+    .single<UserRecord>();
 
   if (error || !user || user.password !== password) {
     return c.json({ error: "Invalid email or password" }, 401);
   }
 
   return c.json({ userId: user.user_id, email: user.email, name: user.name });
+});
+
+app.put("/auth/nickname/:userId", async (c) => {
+  const userId = c.req.param("userId");
+  const { nickname } = await c.req.json<{ nickname: string }>();
+  if (!nickname?.trim()) return c.json({ error: "Nickname required" }, 400);
+
+  const { data, error } = await supabase
+    .from("users")
+    .update({ name: nickname.trim() })
+    .eq("user_id", userId)
+    .select("user_id, email, name")
+    .single<UserRecord>();
+
+  if (error) return c.json({ error: error.message }, 500);
+  return c.json(data);
 });
 
 // ─── ADMIN AUTH & VERIFICATION ────────────────────────────────────────────────
@@ -104,7 +236,7 @@ app.post("/admin/request-code", async (c) => {
   });
 
   if (!emailRes.ok) {
-    const err = (await emailRes.json().catch(() => ({}))) as { message?: string };
+    const err = (await emailRes.json().catch(() => ({}))) as ResendErrorResponse;
     await supabase.from("admin_codes").delete().eq("singleton", "current");
     return c.json({ error: err.message ?? "Email send failed." }, 500);
   }
@@ -120,7 +252,7 @@ app.post("/admin/verify-code", async (c) => {
     .from("admin_codes")
     .select("code, expires_at")
     .eq("singleton", "current")
-    .single<{ code: string; expires_at: number }>();
+    .single<AdminCodeRecord>();
 
   if (!stored) return c.json({ valid: false, error: "No active code found." }, 400);
   if (Date.now() > stored.expires_at) {
@@ -131,6 +263,199 @@ app.post("/admin/verify-code", async (c) => {
 
   await supabase.from("admin_codes").delete().eq("singleton", "current");
   return c.json({ valid: true, token: crypto.randomUUID() });
+});
+
+// ─── CART CRUD ────────────────────────────────────────────────────────────────
+
+app.get("/cart/:userId", async (c) => {
+  const userId = c.req.param("userId");
+  const { data, error } = await supabase
+    .from("carts")
+    .select("items")
+    .eq("user_id", userId)
+    .maybeSingle<Pick<CartRecord, "items">>();
+
+  if (error) return c.json({ error: error.message }, 500);
+  return c.json(data?.items ?? []);
+});
+
+app.post("/cart/:userId", async (c) => {
+  const userId = c.req.param("userId");
+  const item = await c.req.json<CartItemDTO>();
+
+  const { data: current } = await supabase
+    .from("carts")
+    .select("items")
+    .eq("user_id", userId)
+    .maybeSingle<Pick<CartRecord, "items">>();
+
+  const items: CartItemDTO[] = current?.items ?? [];
+  const existingIndex = items.findIndex((i) => i.id === item.id);
+
+  if (existingIndex > -1) {
+    items[existingIndex].qty += item.qty || 1;
+  } else {
+    items.push(item);
+  }
+
+  const { error } = await supabase
+    .from("carts")
+    .upsert({ user_id: userId, items, updated_at: new Date().toISOString() });
+
+  if (error) return c.json({ error: error.message }, 500);
+  return c.json(items);
+});
+
+app.put("/cart/:userId/:productId", async (c) => {
+  const userId = c.req.param("userId");
+  const productId = Number(c.req.param("productId"));
+  const { qty } = await c.req.json<{ qty: number }>();
+
+  const { data: current } = await supabase
+    .from("carts")
+    .select("items")
+    .eq("user_id", userId)
+    .maybeSingle<Pick<CartRecord, "items">>();
+
+  let items: CartItemDTO[] = current?.items ?? [];
+  if (qty <= 0) {
+    items = items.filter((i) => i.id !== productId);
+  } else {
+    items = items.map((i) => (i.id === productId ? { ...i, qty } : i));
+  }
+
+  const { error } = await supabase
+    .from("carts")
+    .upsert({ user_id: userId, items, updated_at: new Date().toISOString() });
+
+  if (error) return c.json({ error: error.message }, 500);
+  return c.json(items);
+});
+
+app.delete("/cart/:userId/:itemId", async (c) => {
+  const userId = c.req.param("userId");
+  const itemId = Number(c.req.param("itemId"));
+
+  const { data: current } = await supabase
+    .from("carts")
+    .select("items")
+    .eq("user_id", userId)
+    .maybeSingle<Pick<CartRecord, "items">>();
+
+  const items: CartItemDTO[] = (current?.items ?? []).filter((i) => i.id !== itemId);
+
+  const { error } = await supabase
+    .from("carts")
+    .upsert({ user_id: userId, items, updated_at: new Date().toISOString() });
+
+  if (error) return c.json({ error: error.message }, 500);
+  return c.json(items);
+});
+
+app.delete("/cart/:userId", async (c) => {
+  const userId = c.req.param("userId");
+  const { error } = await supabase
+    .from("carts")
+    .upsert({ user_id: userId, items: [], updated_at: new Date().toISOString() });
+
+  if (error) return c.json({ error: error.message }, 500);
+  return c.json([]);
+});
+
+// ─── WISHLIST CRUD ────────────────────────────────────────────────────────────
+
+app.get("/wishlist/:userId", async (c) => {
+  const userId = c.req.param("userId");
+  const { data, error } = await supabase
+    .from("wishlists")
+    .select("product_ids")
+    .eq("user_id", userId)
+    .maybeSingle<Pick<WishlistRecord, "product_ids">>();
+
+  if (error) return c.json({ error: error.message }, 500);
+  return c.json(data?.product_ids ?? []);
+});
+
+app.post("/wishlist/:userId", async (c) => {
+  const userId = c.req.param("userId");
+  const { productId } = await c.req.json<{ productId: number }>();
+
+  const { data: current } = await supabase
+    .from("wishlists")
+    .select("product_ids")
+    .eq("user_id", userId)
+    .maybeSingle<Pick<WishlistRecord, "product_ids">>();
+
+  const ids = new Set<number>(current?.product_ids ?? []);
+  ids.add(productId);
+
+  const { error } = await supabase
+    .from("wishlists")
+    .upsert({ user_id: userId, product_ids: Array.from(ids), updated_at: new Date().toISOString() });
+
+  if (error) return c.json({ error: error.message }, 500);
+  return c.json(Array.from(ids));
+});
+
+app.delete("/wishlist/:userId/:productId", async (c) => {
+  const userId = c.req.param("userId");
+  const productId = Number(c.req.param("productId"));
+
+  const { data: current } = await supabase
+    .from("wishlists")
+    .select("product_ids")
+    .eq("user_id", userId)
+    .maybeSingle<Pick<WishlistRecord, "product_ids">>();
+
+  const ids: number[] = (current?.product_ids ?? []).filter((id) => id !== productId);
+
+  const { error } = await supabase
+    .from("wishlists")
+    .upsert({ user_id: userId, product_ids: ids, updated_at: new Date().toISOString() });
+
+  if (error) return c.json({ error: error.message }, 500);
+  return c.json(ids);
+});
+
+// ─── ORDERS CRUD ──────────────────────────────────────────────────────────────
+
+app.get("/orders/:userId", async (c) => {
+  const userId = c.req.param("userId");
+  const { data, error } = await supabase
+    .from("orders")
+    .select("*")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false });
+
+  if (error) return c.json({ error: error.message }, 500);
+  return c.json(data ?? []);
+});
+
+app.post("/orders/:userId", async (c) => {
+  const userId = c.req.param("userId");
+  const body = await c.req.json<{ items?: CartItemDTO[]; total?: number }>();
+
+  const orderId = `ORD-${Date.now().toString().slice(-6)}`;
+  const total = Number(body.total || 0);
+
+  const { data, error } = await supabase
+    .from("orders")
+    .insert({
+      id: orderId,
+      user_id: userId,
+      items: body.items || [],
+      amount: total,
+      status: "Processing",
+      category: body.items?.[0]?.category || "General",
+      created_at: new Date().toISOString(),
+    })
+    .select()
+    .single<OrderRecord>();
+
+  if (error) return c.json({ error: error.message }, 500);
+
+  await supabase.from("carts").upsert({ user_id: userId, items: [], updated_at: new Date().toISOString() });
+  return c.json(data);
 });
 
 // ─── ANALYTICS ────────────────────────────────────────────────────────────────
@@ -163,7 +488,7 @@ app.get("/analytics/sales/total", async (c) => {
   const { data: orders, error } = await query;
   if (error) return c.json({ error: error.message }, 500);
 
-  const safeOrders = orders ?? [];
+  const safeOrders = (orders ?? []) as OrderRecord[];
   const totalRevenue = safeOrders.reduce((sum, o) => sum + Number(o.amount || 0), 0);
   const orderCount = safeOrders.length;
   const averageOrderValue = orderCount > 0 ? totalRevenue / orderCount : 0;
@@ -224,7 +549,7 @@ app.get("/inventory", async (c) => {
     .order("stock_level", { ascending: true });
 
   if (error) return c.json({ error: error.message }, 500);
-  return c.json(data ?? []);
+  return c.json((data ?? []) as InventoryRecord[]);
 });
 
 app.put("/inventory/:sku", async (c) => {
@@ -236,16 +561,17 @@ app.put("/inventory/:sku", async (c) => {
     .update({ ...body, updated_at: new Date().toISOString() })
     .eq("sku", sku)
     .select()
-    .single();
+    .single<InventoryRecord>();
 
   if (error) return c.json({ error: error.message }, 500);
 
+  const logPayload: Record<string, unknown> = { sku, ...body };
   await supabase.from("transaction_logs").insert({
     event_type: "inventory_adjustment",
-    payload: { sku, ...body },
+    payload: logPayload,
     status: "success",
     actor_id: "admin",
-  });
+  } satisfies TransactionLogRecord);
 
   return c.json(data);
 });
@@ -266,7 +592,7 @@ app.get("/logs", async (c) => {
 
   const { data, error } = await query;
   if (error) return c.json({ error: error.message }, 500);
-  return c.json(data ?? []);
+  return c.json((data ?? []) as TransactionLogRecord[]);
 });
 
 // ─── CATEGORIES CRUD ─────────────────────────────────────────────────────────
@@ -277,7 +603,7 @@ app.get("/categories", async (c) => {
     .select("name")
     .order("id", { ascending: true });
   if (error) return c.json({ error: error.message }, 500);
-  return c.json((data ?? []).map((row) => row.name));
+  return c.json(((data ?? []) as CategoryRecord[]).map((row) => row.name));
 });
 
 app.post("/admin/categories", async (c) => {
@@ -288,7 +614,7 @@ app.post("/admin/categories", async (c) => {
     .from("categories")
     .insert({ name: name.trim() })
     .select()
-    .single();
+    .single<CategoryRecord>();
 
   if (error) return c.json({ error: error.message }, 500);
   return c.json(data);
@@ -306,20 +632,41 @@ app.delete("/admin/categories/:name", async (c) => {
 
 // ─── ADMIN OPERATIONS COPILOT (Gemini + DB Context) ───────────────────────────
 
-interface GeminiResponse {
-  candidates?: { content?: { parts?: { text: string }[] } }[];
-  error?: { message?: string };
-}
-
 app.post("/admin/chat/message", async (c) => {
   const geminiKey = Deno.env.get("GEMINI_API_KEY");
   if (!geminiKey) return c.json({ error: "GEMINI_API_KEY secret not set" }, 500);
 
   const { messages } = await c.req.json<{
-    messages: { from: "admin" | "assistant"; text: string; time: string }[];
+    messages: ChatMessageDTO[];
   }>();
 
-  if (!Array.isArray(messages)) return c.json({ error: "messages array required" }, 400);
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return c.json({ error: "messages array required" }, 400);
+  }
+
+  const rawContents = messages
+    .filter((m) => m.text?.trim())
+    .map((m) => ({
+      role: m.from === "assistant" ? ("model" as const) : ("user" as const),
+      parts: [{ text: m.text }],
+    }));
+
+  const contents: { role: "user" | "model"; parts: { text: string }[] }[] = [];
+  for (const item of rawContents) {
+    if (contents.length > 0 && contents[contents.length - 1].role === item.role) {
+      contents[contents.length - 1].parts[0].text += `\n${item.parts[0].text}`;
+    } else {
+      contents.push({ role: item.role, parts: [{ text: item.parts[0].text }] });
+    }
+  }
+
+  while (contents.length > 0 && contents[contents.length - 1].role === "model") {
+    contents.pop();
+  }
+
+  if (contents.length === 0) {
+    return c.json({ error: "No user turn found in message history" }, 400);
+  }
 
   const [inventoryRes, ordersRes] = await Promise.all([
     supabase.from("inventory").select("sku, name, stock_level, reorder_point").limit(20),
@@ -327,18 +674,12 @@ app.post("/admin/chat/message", async (c) => {
   ]);
 
   const liveContext = JSON.stringify({
-    inventorySnapshot: inventoryRes.data ?? [],
-    recentOrdersSnapshot: ordersRes.data ?? [],
+    inventorySnapshot: (inventoryRes.data as InventoryRecord[]) ?? [],
+    recentOrdersSnapshot: (ordersRes.data as OrderRecord[]) ?? [],
   });
 
-  const contents = messages.map((m) => ({
-    role: m.from === "assistant" ? "model" : "user",
-    parts: [{ text: m.text }],
-  }));
-
-  // Using supported Gemini 2.5 endpoint
   const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${geminiKey}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -386,7 +727,8 @@ app.get("/products", async (c) => {
   const { data, error } = await dbQuery;
   if (error) return c.json({ error: error.message }, 500);
 
-  const mapped = (data ?? []).map((p) => ({
+  const records = (data ?? []) as ProductRecord[];
+  const mapped = records.map((p) => ({
     id: p.id,
     name: p.name,
     price: Number(p.price),
@@ -395,14 +737,25 @@ app.get("/products", async (c) => {
     reviews: p.reviews,
     image: p.image,
     category: p.category,
-    badge: p.badge,
+    badge: p.badge ?? undefined,
   }));
 
   return c.json(mapped);
 });
 
 app.post("/admin/products", async (c) => {
-  const body = await c.req.json();
+  const body = await c.req.json<{
+    name: string;
+    price: number;
+    originalPrice?: number;
+    rating?: number;
+    reviews?: number;
+    image: string;
+    category: string;
+    badge?: string | null;
+    stockLevel?: number;
+  }>();
+
   const { data, error } = await supabase
     .from("products")
     .insert({
@@ -416,11 +769,10 @@ app.post("/admin/products", async (c) => {
       badge: body.badge || null,
     })
     .select()
-    .single();
+    .single<ProductRecord>();
 
   if (error) return c.json({ error: error.message }, 500);
 
-  // Attempt to add inventory record without throwing fatal errors if table schema differs
   try {
     await supabase.from("inventory").insert({
       sku: `SKU-${data.id}`,
@@ -429,7 +781,7 @@ app.post("/admin/products", async (c) => {
       reorder_point: 5,
       warehouse_id: "wh-main",
     });
-  } catch (_) {
+  } catch {
     // Non-blocking fallback
   }
 
@@ -437,8 +789,15 @@ app.post("/admin/products", async (c) => {
 });
 
 app.put("/admin/products/:id", async (c) => {
-  const id = c.req.param("id");
-  const body = await c.req.json();
+  const id = Number(c.req.param("id"));
+  const body = await c.req.json<{
+    name: string;
+    price: number;
+    originalPrice?: number;
+    image: string;
+    category: string;
+    badge?: string | null;
+  }>();
 
   const { data, error } = await supabase
     .from("products")
@@ -453,17 +812,70 @@ app.put("/admin/products/:id", async (c) => {
     })
     .eq("id", id)
     .select()
-    .single();
+    .single<ProductRecord>();
 
   if (error) return c.json({ error: error.message }, 500);
   return c.json(data);
 });
 
 app.delete("/admin/products/:id", async (c) => {
-  const id = c.req.param("id");
+  const id = Number(c.req.param("id"));
   const { error } = await supabase.from("products").delete().eq("id", id);
   if (error) return c.json({ error: error.message }, 500);
   return c.json({ success: true });
 });
 
-Deno.serve(app.fetch);
+// ─── ADMIN ANALYTICS CHAT & HISTORY CRUD ──────────────────────────────────────
+
+app.get("/admin/chat/history", async (c) => {
+  const { data, error } = await supabase
+    .from("admin_chat_history")
+    .select("id, session_name, messages, updated_at")
+    .order("updated_at", { ascending: false })
+    .limit(10);
+
+  if (error) return c.json({ error: error.message }, 500);
+  return c.json((data ?? []) as ChatHistoryRecord[]);
+});
+
+app.post("/admin/chat/history", async (c) => {
+  const { sessionId, sessionName, messages } = await c.req.json<{
+    sessionId?: string;
+    sessionName?: string;
+    messages: ChatMessageDTO[];
+  }>();
+
+  if (!messages || messages.length === 0) {
+    return c.json({ error: "Messages payload required" }, 400);
+  }
+
+  const payload: {
+    id?: string;
+    messages: ChatMessageDTO[];
+    updated_at: string;
+    session_name: string;
+  } = {
+    messages,
+    updated_at: new Date().toISOString(),
+    session_name: sessionName || `Analysis ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
+  };
+
+  if (sessionId) {
+    payload.id = sessionId;
+  }
+
+  const { data, error } = await supabase
+    .from("admin_chat_history")
+    .upsert(payload)
+    .select()
+    .single<ChatHistoryRecord>();
+
+  if (error) return c.json({ error: error.message }, 500);
+  return c.json(data);
+});
+
+root.route("/functions/v1/server", app);
+root.route("/server", app);
+root.route("/", app);
+
+Deno.serve(root.fetch);

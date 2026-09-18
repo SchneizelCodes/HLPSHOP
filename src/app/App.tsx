@@ -3,6 +3,7 @@ import {
   type InventoryItem, 
   type TransactionLog,
   type Product,
+  type ChatHistoryItem,
   api, 
   loadUser, 
   saveUser, 
@@ -20,6 +21,87 @@ import {
   Activity, KeyRound, Award, Check
 } from "lucide-react";
 import myImage from "../imports/logo.jpg";
+
+// ─── DOMAIN INTERFACES ────────────────────────────────────────────────────────
+
+interface OrderItem {
+  id: string;
+  total: number;
+  status: string;
+  created_at?: string;
+  items?: CartItem[];
+}
+
+interface SalesTelemetryData {
+  totalRevenue: number;
+  orderCount: number;
+  averageOrderValue: number;
+  historicalBreakdown: { date: string; sales: number }[];
+}
+
+// ─── EMBEDDED ML BUSINESS ANALYTICS ENGINE ───────────────────────────────────
+
+class BusinessAnalyticsML {
+  /**
+   * Linear Regression Model: y = mx + b for Sales Trajectory & Projection
+   */
+  static forecastRevenue(dailySales: { date: string; sales: number }[], periodsAhead = 3) {
+    if (!dailySales || dailySales.length < 2) {
+      return { trend: "insufficient_data", slope: 0, predictions: [] };
+    }
+
+    const n = dailySales.length;
+    let sumX = 0;
+    let sumY = 0;
+    let sumXY = 0;
+    let sumXX = 0;
+
+    dailySales.forEach((pt, i) => {
+      sumX += i;
+      sumY += pt.sales;
+      sumXY += i * pt.sales;
+      sumXX += i * i;
+    });
+
+    const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+    const intercept = (sumY - slope * sumX) / n;
+
+    const predictions: number[] = [];
+    for (let j = 1; j <= periodsAhead; j++) {
+      const futureIndex = n - 1 + j;
+      const forecastVal = Math.max(0, slope * futureIndex + intercept);
+      predictions.push(Number(forecastVal.toFixed(2)));
+    }
+
+    return {
+      trend: slope > 0.05 ? "upward" : slope < -0.05 ? "downward" : "flat",
+      dailyGrowthVelocity: Number(slope.toFixed(2)),
+      predictions,
+    };
+  }
+
+  /**
+   * Inventory Depletion & Restock Vulnerability Classifier
+   */
+  static evaluateInventoryDepletion(inventory: InventoryItem[]) {
+    return inventory
+      .map((item) => {
+        const ratio = item.stock_level / Math.max(1, item.reorder_point);
+        let riskLevel: "CRITICAL" | "MODERATE" | "HEALTHY" = "HEALTHY";
+        if (ratio <= 0.5) riskLevel = "CRITICAL";
+        else if (ratio <= 1.0) riskLevel = "MODERATE";
+
+        return {
+          sku: item.sku,
+          name: item.name,
+          stock: item.stock_level,
+          ratio: Number(ratio.toFixed(2)),
+          riskLevel,
+        };
+      })
+      .sort((a, b) => a.ratio - b.ratio);
+  }
+}
 
 // ─── GREETING + CLOCK HOOKS ───────────────────────────────────────────────────
 
@@ -66,7 +148,14 @@ type Page =
 type LayoutMode = "mobile" | "desktop";
 
 interface CartItem {
-  id: number; name: string; price: number; qty: number; image: string; color: string; size: string;
+  id: number;
+  name: string;
+  price: number;
+  qty: number;
+  image: string;
+  color: string;
+  size: string;
+  category?: string;
 }
 
 interface SharedProps {
@@ -452,8 +541,9 @@ function AdminAccessModal({ onClose, onGrantAccess }: { onClose: () => void; onG
       const data = await api.admin.requestCode();
       setCountdown(data.expiresIn);
       setStep(2);
-    } catch (e: any) {
-      setCodeError(e.message ?? "Failed to send email. Try again.");
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : "Failed to send email. Try again.";
+      setCodeError(message);
     } finally {
       setLoading(false);
     }
@@ -471,8 +561,9 @@ function AdminAccessModal({ onClose, onGrantAccess }: { onClose: () => void; onG
       } else {
         setCodeError(data.error ?? "Incorrect code.");
       }
-    } catch (e: any) {
-      setCodeError(e.message ?? "Verification failed. Try again.");
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : "Verification failed. Try again.";
+      setCodeError(message);
     } finally {
       setLoading(false);
     }
@@ -1028,7 +1119,9 @@ function NicknamePage({ user, onDone }: { user: User; onDone: (nickname: string)
     setLoading(true);
     try {
       await api.auth.setNickname(user.userId, nickname.trim());
-    } catch {}
+    } catch {
+      // Graceful local progression
+    }
     onDone(nickname.trim());
   };
 
@@ -1066,8 +1159,9 @@ function LoginPage({ onLogin }: { onNavigate: (p: Page) => void; onLogin: (user:
         ? await api.auth.register(email, name, password)
         : await api.auth.login(email, password);
       onLogin(user, isNew);
-    } catch (e: any) {
-      setError(e.message ?? "Something went wrong");
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : "Something went wrong";
+      setError(message);
     } finally {
       setLoading(false);
     }
@@ -1100,6 +1194,7 @@ function LoginPage({ onLogin }: { onNavigate: (p: Page) => void; onLogin: (user:
     </div>
   );
 }
+
 function CheckoutProgress({ step }: { step: number }) {
   const steps = ["Cart", "Address", "Delivery", "Payment", "Review"];
   return (
@@ -1204,7 +1299,7 @@ function ConfirmationPage({ onNavigate, orderId }: { onNavigate: (p: Page) => vo
 }
 
 function OrdersPage({ onNavigate, isDesktop, userId }: { onNavigate: (p: Page) => void; isDesktop: boolean; userId?: string }) {
-  const [orders, setOrders] = useState<any[]>([]);
+  const [orders, setOrders] = useState<OrderItem[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -1222,7 +1317,7 @@ function OrdersPage({ onNavigate, isDesktop, userId }: { onNavigate: (p: Page) =
         {loading ? <p className="text-muted-foreground text-center py-10">Loading...</p> : orders.length === 0 ? (
           <p className="text-center text-muted-foreground py-10">No orders placed yet.</p>
         ) : (
-          orders.map((o: any) => (
+          orders.map((o) => (
             <div key={o.id} className="bg-card border border-border rounded-xl p-4 flex justify-between items-center">
               <div>
                 <p className="font-bold text-foreground text-sm">{o.id}</p>
@@ -1329,17 +1424,11 @@ function AdminDashboardPage({
   onRefreshCategories: () => void;
 }) {
   const [loading, setLoading] = useState(true);
-  const [salesData, setSalesData] = useState<{
-    totalRevenue: number;
-    orderCount: number;
-    averageOrderValue: number;
-    historicalBreakdown: { date: string; sales: number }[];
-  } | null>(null);
+  const [salesData, setSalesData] = useState<SalesTelemetryData | null>(null);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [logs, setLogs] = useState<TransactionLog[]>([]);
   const [activeTab, setActiveTab] = useState<"overview" | "products" | "inventory" | "logs">("overview");
 
-  // Product Form Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [formName, setFormName] = useState("");
@@ -1350,7 +1439,6 @@ function AdminDashboardPage({
   const [formBadge, setFormBadge] = useState("");
   const [savingProduct, setSavingProduct] = useState(false);
 
-  // Category Manager State
   const [newCatInput, setNewCatInput] = useState("");
   const [catActionLoading, setCatActionLoading] = useState(false);
 
@@ -1365,7 +1453,7 @@ function AdminDashboardPage({
       setSalesData(sales);
       setInventory(inv);
       setLogs(lg);
-    } catch (err) {
+    } catch (err: unknown) {
       console.error("Failed to load admin telemetry", err);
     } finally {
       setLoading(false);
@@ -1381,7 +1469,7 @@ function AdminDashboardPage({
     try {
       await api.admin.inventory.updateStock(sku, next);
       setInventory(prev => prev.map(item => item.sku === sku ? { ...item, stock_level: next } : item));
-    } catch (err) {
+    } catch (err: unknown) {
       console.error("Stock update failed", err);
     }
   };
@@ -1420,8 +1508,9 @@ function AdminDashboardPage({
       setFormCategory(trimmed);
       setNewCatInput("");
       onRefreshCategories();
-    } catch (err: any) {
-      alert(err.message ?? "Failed to add category");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to add category";
+      alert(message);
     } finally {
       setCatActionLoading(false);
     }
@@ -1437,8 +1526,9 @@ function AdminDashboardPage({
         const fallback = categories.find(c => c !== "All" && c !== catName) || "General";
         setFormCategory(fallback);
       }
-    } catch (err: any) {
-      alert(err.message ?? "Failed to delete category");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to delete category";
+      alert(message);
     } finally {
       setCatActionLoading(false);
     }
@@ -1464,8 +1554,9 @@ function AdminDashboardPage({
       }
       setIsModalOpen(false);
       onRefreshProducts();
-    } catch (e: any) {
-      alert(`Error saving product: ${e.message}`);
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : "Error saving product";
+      alert(`Error saving product: ${message}`);
     } finally {
       setSavingProduct(false);
     }
@@ -1476,8 +1567,9 @@ function AdminDashboardPage({
       try {
         await api.products.delete(id);
         onRefreshProducts();
-      } catch (e: any) {
-        alert(`Error: ${e.message}`);
+      } catch (e: unknown) {
+        const message = e instanceof Error ? e.message : "Error deleting product";
+        alert(`Error: ${message}`);
       }
     }
   };
@@ -1821,7 +1913,7 @@ function AdminDashboardPage({
   );
 }
 
-// ─── QUICK CHAT PAGE (ADMIN COPILOT) ──────────────────────────────────────────
+// ─── QUICK CHAT PAGE (ADMIN COPILOT + ML ENGINE + STATE PERSISTENCE) ──────────
 
 interface ChatMessage {
   id: number;
@@ -1830,76 +1922,342 @@ interface ChatMessage {
   time: string;
 }
 
+const STORAGE_CHAT_KEY = "shopwisely_admin_active_chat";
+const STORAGE_DRAFT_KEY = "shopwisely_admin_chat_draft";
+const STORAGE_SESSION_ID = "shopwisely_admin_active_session_id";
+
 function QuickChatPage({ isDesktop }: { isDesktop: boolean; isAdmin: boolean }) {
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    { id: 1, from: "system", text: "ShopWisely Admin Copilot — Internal Operations", time: "" },
-    { id: 2, from: "admin", text: "Operations Copilot active. Ready to inspect live store catalog, orders, and telemetry.", time: "09:00" },
-  ]);
-  const [input, setInput] = useState("");
+  const [messages, setMessages] = useState<ChatMessage[]>(() => {
+    const saved = localStorage.getItem(STORAGE_CHAT_KEY);
+    if (saved) {
+      try { 
+        return JSON.parse(saved) as ChatMessage[]; 
+      } catch {
+        // Fallback to default
+      }
+    }
+    return [
+      {
+        id: 1,
+        from: "system",
+        text: "ShopWisely Business Analytics ML Copilot Active",
+        time: "",
+      },
+      {
+        id: 2,
+        from: "admin",
+        text: "Operations Copilot active with statistical ML forecast models. Ask for sales forecasts, depletion risks, or database audits.",
+        time: "09:00",
+      },
+    ];
+  });
+
+  const [input, setInput] = useState<string>(() => {
+    return localStorage.getItem(STORAGE_DRAFT_KEY) || "";
+  });
+
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(() => {
+    return localStorage.getItem(STORAGE_SESSION_ID) || null;
+  });
+
+  const [historyList, setHistoryList] = useState<ChatHistoryItem[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_CHAT_KEY, JSON.stringify(messages));
+  }, [messages]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_DRAFT_KEY, input);
+  }, [input]);
+
+  const loadHistory = useCallback(async () => {
+    try {
+      const data = await api.admin.chat.getHistory();
+      setHistoryList(Array.isArray(data) ? data : []);
+    } catch (e: unknown) {
+      console.error("Failed to load chat history", e);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadHistory();
+  }, [loadHistory]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isLoading]);
 
-  const handleSend = async () => {
-    if (!input.trim() || isLoading) return;
-    const userMsg: ChatMessage = { id: Date.now(), from: "user", text: input.trim(), time: "Now" };
-    const next = [...messages, userMsg];
-    setMessages(next);
-    setInput("");
-    setIsLoading(true);
+  const nowStr = () => {
+    const d = new Date();
+    return `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
+  };
 
+  const handleResetChat = () => {
+    if (confirm("Reset current conversation? Your draft and current messages will be cleared.")) {
+      const freshMessages: ChatMessage[] = [
+        {
+          id: 1,
+          from: "system",
+          text: "ShopWisely Business Analytics ML Copilot Active",
+          time: "",
+        },
+        {
+          id: 2,
+          from: "admin",
+          text: "Session refreshed. Statistical models online. How can I assist your business analysis?",
+          time: nowStr(),
+        },
+      ];
+      setMessages(freshMessages);
+      setInput("");
+      setCurrentSessionId(null);
+      localStorage.removeItem(STORAGE_CHAT_KEY);
+      localStorage.removeItem(STORAGE_DRAFT_KEY);
+      localStorage.removeItem(STORAGE_SESSION_ID);
+    }
+  };
+
+  const saveSessionToDb = async (msgsToSave: ChatMessage[]) => {
     try {
-      const history = next
-        .filter(m => m.from !== "system")
-        .map(m => ({
-          from: m.from === "user" ? ("assistant" as const) : ("admin" as const),
-          text: m.text,
-          time: m.time,
-        }));
-      const res = await api.admin.chat.sendMessage(history);
-      setMessages(prev => [...prev, { id: Date.now() + 1, from: "admin", text: res.message, time: "Now" }]);
-    } catch (e: any) {
-      setMessages(prev => [...prev, { id: Date.now() + 1, from: "system", text: `Error: ${e.message}`, time: "" }]);
+      const firstUserMsg = msgsToSave.find(m => m.from === "user")?.text;
+      const title = firstUserMsg ? firstUserMsg.slice(0, 26) + "..." : "Analytics Query";
+
+      const res = await api.admin.chat.saveSession({
+        sessionId: currentSessionId || undefined,
+        sessionName: title,
+        messages: msgsToSave,
+      });
+
+      if (res?.id) {
+        setCurrentSessionId(res.id);
+        localStorage.setItem(STORAGE_SESSION_ID, res.id);
+      }
+      loadHistory();
+    } catch (err: unknown) {
+      console.error("Auto-save to history failed", err);
+    }
+  };
+
+  const handleRunMLForecast = async () => {
+    setIsLoading(true);
+    try {
+      const sales = await api.analytics.getTotalSales({ range: "month" });
+      const inventory = await api.admin.inventory.getAll();
+
+      const forecast = BusinessAnalyticsML.forecastRevenue(sales.historicalBreakdown || [], 3);
+      const stockRisks = BusinessAnalyticsML.evaluateInventoryDepletion(inventory || []);
+      const criticalItems = stockRisks.filter(r => r.riskLevel === "CRITICAL");
+
+      const mlSummary = `**ML Business Intelligence Report**:\n` +
+        `• **Revenue Trend**: ${forecast.trend.toUpperCase()} (Velocity: $${forecast.dailyGrowthVelocity}/day)\n` +
+        `• **Next 3-Day Projected Revenues**: ${forecast.predictions.length > 0 ? forecast.predictions.map(p => `$${p}`).join(", ") : "Computing..."}\n` +
+        `• **Stock Depletion Risk**: ${criticalItems.length} item(s) in critical depletion boundary.`;
+
+      const botMsg: ChatMessage = {
+        id: Date.now(),
+        from: "admin",
+        text: mlSummary,
+        time: nowStr()
+      };
+
+      const updated = [...messages, botMsg];
+      setMessages(updated);
+      await saveSessionToDb(updated);
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : "ML analysis error";
+      alert("ML Analysis error: " + message);
     } finally {
       setIsLoading(false);
     }
   };
 
+  const handleSend = async (textOverride?: string) => {
+    const textToSend = (textOverride ?? input).trim();
+    if (!textToSend || isLoading) return;
+
+    setInput("");
+    localStorage.removeItem(STORAGE_DRAFT_KEY);
+
+    const userMsg: ChatMessage = { id: Date.now(), from: "user", text: textToSend, time: nowStr() };
+    const nextMessages = [...messages, userMsg];
+    setMessages(nextMessages);
+    setIsLoading(true);
+
+    try {
+      const payload = nextMessages
+        .filter(m => m.from !== "system")
+        .map(m => ({
+          from: m.from === "admin" ? ("assistant" as const) : ("admin" as const),
+          text: m.text,
+          time: m.time,
+        }));
+
+      const res = await api.admin.chat.sendMessage(payload);
+      const botReply: ChatMessage = {
+        id: Date.now() + 1,
+        from: "admin",
+        text: res.message,
+        time: nowStr(),
+      };
+
+      const finalMessages = [...nextMessages, botReply];
+      setMessages(finalMessages);
+      await saveSessionToDb(finalMessages);
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : "Internal telemetry error";
+      setMessages(prev => [
+        ...prev,
+        {
+          id: Date.now() + 1,
+          from: "system",
+          text: `Telemetry Notice: ${message}`,
+          time: "",
+        },
+      ]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const restoreSession = (item: ChatHistoryItem) => {
+    if (item?.messages && Array.isArray(item.messages)) {
+      setMessages(item.messages);
+      setCurrentSessionId(item.id);
+      localStorage.setItem(STORAGE_SESSION_ID, item.id);
+      setShowHistory(false);
+    }
+  };
+
   return (
-    <div className="flex flex-col h-full">
-      {!isDesktop && <MobileTopBar title="Admin Quick Chat" />}
-      <div className="flex-none px-4 py-3 border-b border-border bg-[#0F0F0F] flex items-center gap-3">
-        <div className="w-9 h-9 rounded-xl bg-[#FF6B00]/15 flex items-center justify-center flex-none">
-          <Bot size={18} className="text-[#FF6B00]" />
+    <div className="flex flex-col h-full bg-background relative">
+      <div className="flex-none px-4 py-3 border-b border-border bg-[#0F0F0F] flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-[#FF6B00]/15 flex items-center justify-center">
+            <Bot size={17} className="text-[#FF6B00]" />
+          </div>
+          <div>
+            <p className="text-sm font-bold text-foreground leading-none">Analytics & ML Copilot</p>
+            <p className="text-[10px] text-green-400 mt-1 flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+              State Persistent across pages
+            </p>
+          </div>
         </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-semibold text-foreground">Admin Operations Copilot</p>
-          <p className="text-[11px] text-green-400 flex items-center gap-1">
-            <span className="w-1.5 h-1.5 bg-green-400 rounded-full inline-block" /> Active
-          </p>
+
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleRunMLForecast}
+            disabled={isLoading}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-[#FF6B00]/30 bg-[#FF6B00]/10 text-xs font-semibold text-[#FF6B00] hover:bg-[#FF6B00]/20 transition-colors cursor-pointer"
+            title="Execute client-side machine learning sales and stock models"
+          >
+            <TrendingUp size={13} />
+            <span className="hidden sm:inline">Run ML Forecast</span>
+          </button>
+
+          <button
+            onClick={() => setShowHistory(!showHistory)}
+            className="px-2.5 py-1.5 rounded-xl border border-border bg-[#161616] text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+          >
+            History ({historyList.length}/10)
+          </button>
+
+          <button
+            onClick={handleResetChat}
+            className="p-2 rounded-xl border border-border bg-[#161616] text-muted-foreground hover:text-foreground hover:border-[#FF6B00]/40 transition-colors cursor-pointer"
+            title="Reset Chat & Clear Drafts"
+          >
+            <RefreshCw size={14} />
+          </button>
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
-        {messages.map(msg => (
-          <div key={msg.id} className={`flex ${msg.from === "admin" ? "justify-start" : msg.from === "user" ? "justify-end" : "justify-center"}`}>
-            <div className={`max-w-[80%] px-4 py-2.5 rounded-2xl ${msg.from === "admin" ? "bg-[#1E1E1E] text-foreground" : msg.from === "user" ? "bg-[#FF6B00] text-white" : "bg-[#1A1A1A] text-xs text-muted-foreground"}`}>
+      {showHistory && (
+        <div className="absolute top-14 right-0 bottom-0 w-72 bg-[#121212] border-l border-border z-30 p-4 flex flex-col shadow-2xl">
+          <div className="flex items-center justify-between pb-3 border-b border-border">
+            <span className="text-xs font-bold uppercase tracking-wider text-foreground">Saved Sessions (Max 10)</span>
+            <button onClick={() => setShowHistory(false)} className="text-muted-foreground hover:text-foreground cursor-pointer">
+              <X size={15} />
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto py-3 space-y-2">
+            {historyList.length === 0 ? (
+              <p className="text-xs text-muted-foreground text-center py-8">No saved chat history in database.</p>
+            ) : (
+              historyList.map((item) => (
+                <button
+                  key={item.id}
+                  onClick={() => restoreSession(item)}
+                  className={`w-full text-left p-2.5 rounded-xl border text-xs transition-all cursor-pointer ${
+                    currentSessionId === item.id
+                      ? "border-[#FF6B00] bg-[#FF6B00]/10 text-foreground font-bold"
+                      : "border-border bg-[#181818] text-muted-foreground hover:text-foreground hover:border-border/80"
+                  }`}
+                >
+                  <p className="truncate">{item.session_name}</p>
+                  <span className="text-[10px] text-muted-foreground/60 mt-1 block">
+                    {new Date(item.updated_at).toLocaleDateString()} · {item.messages?.length || 0} messages
+                  </span>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        {messages.map((msg) => (
+          <div
+            key={msg.id}
+            className={`flex ${
+              msg.from === "admin" ? "justify-start" : msg.from === "user" ? "justify-end" : "justify-center"
+            }`}
+          >
+            <div
+              className={`max-w-[80%] px-4 py-3 rounded-2xl ${
+                msg.from === "admin"
+                  ? "bg-[#1E1E1E] text-foreground border border-border leading-relaxed whitespace-pre-wrap"
+                  : msg.from === "user"
+                  ? "bg-[#FF6B00] text-white"
+                  : "bg-[#161616] text-xs text-muted-foreground border border-border"
+              }`}
+            >
               <p className="text-sm">{msg.text}</p>
+              {msg.time && (
+                <p className={`text-[10px] mt-1 ${msg.from === "admin" ? "text-muted-foreground" : "text-white/70"}`}>
+                  {msg.time}
+                </p>
+              )}
             </div>
           </div>
         ))}
+        {isLoading && (
+          <div className="flex justify-start">
+            <div className="bg-[#1E1E1E] border border-border px-4 py-3 rounded-2xl text-xs text-muted-foreground animate-pulse">
+              Running model inference & reading metrics…
+            </div>
+          </div>
+        )}
         <div ref={bottomRef} />
       </div>
 
-      <div className="flex-none px-4 py-3 border-t border-border bg-background flex items-center gap-2">
-        <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === "Enter" && handleSend()}
-          placeholder="Ask Copilot about orders, catalog, or revenue..."
-          className="flex-1 bg-[#1A1A1A] border border-border rounded-xl px-4 py-2.5 text-sm text-foreground focus:outline-none focus:border-[#FF6B00]" />
-        <button onClick={handleSend} disabled={isLoading} className="w-10 h-10 bg-[#FF6B00] rounded-xl flex items-center justify-center text-white cursor-pointer disabled:opacity-50">
-          <Send size={16} />
+      <div className="flex-none p-3 border-t border-border bg-background flex items-center gap-2">
+        <input
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && handleSend()}
+          placeholder="Draft message (persists when switching pages)..."
+          className="flex-1 bg-[#1A1A1A] border border-border rounded-xl px-4 py-2.5 text-sm text-foreground focus:outline-none focus:border-[#FF6B00] transition-colors"
+        />
+        <button
+          onClick={() => handleSend()}
+          disabled={!input.trim() || isLoading}
+          className="w-10 h-10 bg-[#FF6B00] hover:bg-[#E05F00] text-white rounded-xl flex items-center justify-center transition-colors disabled:opacity-40 cursor-pointer flex-none"
+        >
+          <Send size={15} />
         </button>
       </div>
     </div>
@@ -1929,7 +2287,7 @@ export default function App() {
     try {
       const list = await api.products.getAll();
       setProducts(list);
-    } catch (err) {
+    } catch (err: unknown) {
       console.error("Failed to load products", err);
     }
   }, []);
@@ -1940,7 +2298,7 @@ export default function App() {
       if (Array.isArray(list) && list.length > 0) {
         setCategories(["All", ...list.filter(c => c !== "All")]);
       }
-    } catch (e) {
+    } catch (e: unknown) {
       console.error("Failed to load categories", e);
     }
   }, []);
@@ -1953,7 +2311,9 @@ export default function App() {
       ]);
       setCart(Array.isArray(cartData) ? cartData : []);
       setWishlist(Array.isArray(wishlistData) ? wishlistData : []);
-    } catch { /* fallback to local */ }
+    } catch {
+      // Graceful local state retention
+    }
     setDataLoaded(true);
   }, []);
 
@@ -2007,7 +2367,16 @@ export default function App() {
   };
 
   const addToCart = useCallback(async (product: Product) => {
-    const item: CartItem = { id: product.id, name: product.name, price: product.price, qty: 1, image: product.image, color: "Black", size: "M" };
+    const item: CartItem = { 
+      id: product.id, 
+      name: product.name, 
+      price: product.price, 
+      qty: 1, 
+      image: product.image, 
+      color: "Black", 
+      size: "M", 
+      category: product.category 
+    };
     setCart(prev => {
       const existing = prev.find(i => i.id === product.id);
       if (existing) return prev.map(i => i.id === product.id ? { ...i, qty: i.qty + 1 } : i);

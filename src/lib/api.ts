@@ -28,8 +28,6 @@ async function req(path: string, options?: RequestInit) {
 export type User = { userId: string; email: string; name: string; role?: "admin" | "user" };
 export type TimeRange = "today" | "week" | "month" | "quarter" | "year" | "custom";
 
-
-
 export interface SalesFilter {
   range?: TimeRange;
   startDate?: string;
@@ -72,10 +70,16 @@ export interface Product {
   badge?: string;
 }
 
+export interface ChatHistoryItem {
+  id: string;
+  session_name: string;
+  messages: any[];
+  updated_at: string;
+}
+
 // ─── API CLIENT ───────────────────────────────────────────────────────────────
 
 export const api = {
-
   orders: {
     get: (userId: string) => req(`/orders/${userId}`),
     create: (userId: string, order: object) =>
@@ -83,24 +87,24 @@ export const api = {
   },
 
   cart: {
-  get: (userId: string) => req(`/cart/${userId}`),
-  add: (userId: string, item: object) =>
-    req(`/cart/${userId}`, { method: "POST", body: JSON.stringify(item) }),
-  update: (userId: string, productId: number, qty: number) =>
-    req(`/cart/${userId}/${productId}`, { method: "PUT", body: JSON.stringify({ qty }) }),
-  remove: (userId: string, productId: number) =>
-    req(`/cart/${userId}/${productId}`, { method: "DELETE" }),
-  clear: (userId: string) =>
-    req(`/cart/${userId}`, { method: "DELETE" }),
-},
+    get: (userId: string) => req(`/cart/${userId}`),
+    add: (userId: string, item: object) =>
+      req(`/cart/${userId}`, { method: "POST", body: JSON.stringify(item) }),
+    update: (userId: string, productId: number, qty: number) =>
+      req(`/cart/${userId}/${productId}`, { method: "PUT", body: JSON.stringify({ qty }) }),
+    remove: (userId: string, productId: number) =>
+      req(`/cart/${userId}/${productId}`, { method: "DELETE" }),
+    clear: (userId: string) =>
+      req(`/cart/${userId}`, { method: "DELETE" }),
+  },
 
-wishlist: {
-  get: (userId: string) => req(`/wishlist/${userId}`),
-  add: (userId: string, productId: number) =>
-    req(`/wishlist/${userId}`, { method: "POST", body: JSON.stringify({ productId }) }),
-  remove: (userId: string, productId: number) =>
-    req(`/wishlist/${userId}/${productId}`, { method: "DELETE" }),
-},
+  wishlist: {
+    get: (userId: string) => req(`/wishlist/${userId}`),
+    add: (userId: string, productId: number) =>
+      req(`/wishlist/${userId}`, { method: "POST", body: JSON.stringify({ productId }) }),
+    remove: (userId: string, productId: number) =>
+      req(`/wishlist/${userId}/${productId}`, { method: "DELETE" }),
+  },
 
   time: {
     get: () => req("/time") as Promise<{ iso: string; ts: number }>,
@@ -124,7 +128,7 @@ wishlist: {
         body: JSON.stringify({ code }),
       }) as Promise<{ valid: boolean; token?: string; error?: string }>,
 
-    // Operations Copilot Chat
+    // Operations Copilot Chat & Session History
     chat: {
       sendMessage: (
         messages: { from: "admin" | "assistant"; text: string; time: string }[],
@@ -135,6 +139,19 @@ wishlist: {
           headers: adminToken ? { "x-admin-token": adminToken } : {},
           body: JSON.stringify({ messages }),
         }) as Promise<{ message: string }>,
+      getHistory: (adminToken?: string) =>
+        req("/admin/chat/history", {
+          headers: adminToken ? { "x-admin-token": adminToken } : {},
+        }) as Promise<ChatHistoryItem[]>,
+      saveSession: (
+        payload: { sessionId?: string; sessionName?: string; messages: any[] },
+        adminToken?: string,
+      ) =>
+        req("/admin/chat/history", {
+          method: "POST",
+          headers: adminToken ? { "x-admin-token": adminToken } : {},
+          body: JSON.stringify(payload),
+        }) as Promise<ChatHistoryItem>,
     },
 
     // Inventory Endpoints
@@ -150,8 +167,6 @@ wishlist: {
           body: JSON.stringify({ stock_level }),
         }) as Promise<InventoryItem>,
     },
-    
-    
 
     // Transaction & Audit Logs
     logs: {
@@ -253,22 +268,4 @@ export function getOrCreateGuestId(): string {
     localStorage.setItem(GUEST_KEY, id);
   }
   return id;
-}
-
-export interface InventoryItem {
-  sku: string;
-  name: string;
-  stock_level: number;
-  reorder_point: number;
-  warehouse_id: string;
-  updated_at: string;
-}
-
-export interface TransactionLog {
-  id: string;
-  event_type: string;
-  payload: Record<string, any>;
-  status: "success" | "failed" | "pending";
-  actor_id: string | null;
-  created_at: string;
 }
