@@ -1882,16 +1882,36 @@ function AdminDashboardPage({ isDesktop }: { isDesktop: boolean }) {
   );
 }
 
-// ─── QUICK CHAT PAGE ──────────────────────────────────────────────────────────
+// ─── QUICK CHAT PAGE (ADMIN OPERATIONS) ───────────────────────────────────────
 
 interface ChatMessage {
-  id: number; from: "admin" | "user" | "system"; text: string; time: string;
+  id: number;
+  from: "admin" | "user" | "system";
+  text: string;
+  time: string;
 }
+
+const ADMIN_QUICK_ACTIONS = [
+  "Check pending orders (> 24h)",
+  "Low stock alerts across categories",
+  "Summarize today's revenue & orders",
+  "Flagged suspicious checkout attempts",
+];
 
 function QuickChatPage({ isDesktop, isAdmin }: { isDesktop: boolean; isAdmin: boolean }) {
   const [messages, setMessages] = useState<ChatMessage[]>([
-    { id: 1, from: "system", text: "ShopWisely AI Support — powered by Gemini", time: "" },
-    { id: 2, from: "admin", text: "Hello! Welcome to ShopWisely support. How can I help you today?", time: "09:00" },
+    {
+      id: 1,
+      from: "system",
+      text: "ShopWisely Admin Copilot — Internal Operations",
+      time: "",
+    },
+    {
+      id: 2,
+      from: "admin",
+      text: "Operations Copilot active. Ready to review fulfillment bottlenecks, query live inventory, or inspect transaction logs. What do you need?",
+      time: "09:00",
+    },
   ]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -1907,8 +1927,8 @@ function QuickChatPage({ isDesktop, isAdmin }: { isDesktop: boolean; isAdmin: bo
     return `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
   };
 
-  const sendMessage = async () => {
-    const text = input.trim();
+  const handleSend = async (textToSend?: string) => {
+    const text = (textToSend ?? input).trim();
     if (!text || isLoading) return;
     setInput("");
 
@@ -1920,19 +1940,25 @@ function QuickChatPage({ isDesktop, isAdmin }: { isDesktop: boolean; isAdmin: bo
     try {
       const chatHistory = nextMessages.filter(m => m.from !== "system");
       const data = await api.quickChat.sendMessage(chatHistory);
-      setMessages(prev => [...prev, {
-        id: Date.now() + 1,
-        from: "admin",
-        text: data.message,
-        time: nowStr(),
-      }]);
+      setMessages(prev => [
+        ...prev,
+        {
+          id: Date.now() + 1,
+          from: "admin",
+          text: data.message,
+          time: nowStr(),
+        },
+      ]);
     } catch (e: any) {
-      setMessages(prev => [...prev, {
-        id: Date.now() + 1,
-        from: "system",
-        text: `AI error: ${e.message ?? "Unable to reach Gemini. Check your API key."}`,
-        time: "",
-      }]);
+      setMessages(prev => [
+        ...prev,
+        {
+          id: Date.now() + 1,
+          from: "system",
+          text: `Copilot error: ${e.message ?? "Failed to connect to admin operations endpoint."}`,
+          time: "",
+        },
+      ]);
     } finally {
       setIsLoading(false);
     }
@@ -1940,7 +1966,7 @@ function QuickChatPage({ isDesktop, isAdmin }: { isDesktop: boolean; isAdmin: bo
 
   return (
     <div className="flex flex-col h-full">
-      {!isDesktop && <MobileTopBar title="Quick Chat" />}
+      {!isDesktop && <MobileTopBar title="Admin Quick Chat" />}
 
       {/* Chat header */}
       <div className="flex-none px-4 py-3 border-b border-border bg-[#0F0F0F] flex items-center gap-3">
@@ -1948,17 +1974,15 @@ function QuickChatPage({ isDesktop, isAdmin }: { isDesktop: boolean; isAdmin: bo
           <Bot size={18} className="text-[#FF6B00]" />
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-semibold text-foreground">AI Support Chat</p>
+          <p className="text-sm font-semibold text-foreground">Admin Operations Copilot</p>
           <p className="text-[11px] text-green-400 flex items-center gap-1">
             <span className="w-1.5 h-1.5 bg-green-400 rounded-full inline-block" />
-            Connected · gemini-3.6-flash
+            Active · gemini-3.6-flash
           </p>
         </div>
-        {isAdmin && (
-          <span className="flex-none text-[10px] bg-[#FF6B00]/15 text-[#FF6B00] border border-[#FF6B00]/25 px-2.5 py-1 rounded-full font-bold tracking-wide">
-            ADMIN
-          </span>
-        )}
+        <span className="flex-none text-[10px] bg-[#FF6B00]/15 text-[#FF6B00] border border-[#FF6B00]/25 px-2.5 py-1 rounded-full font-bold tracking-wide">
+          ADMIN CONSOLE
+        </span>
       </div>
 
       {/* Messages */}
@@ -1978,13 +2002,17 @@ function QuickChatPage({ isDesktop, isAdmin }: { isDesktop: boolean; isAdmin: bo
                   <Bot size={12} className="text-[#FF6B00]" />
                 </div>
               )}
-              <div className={`max-w-[75%] px-4 py-2.5 rounded-2xl space-y-0.5 ${
-                msg.from === "admin"
-                  ? "bg-[#1E1E1E] border border-border text-foreground rounded-tl-sm"
-                  : "bg-[#FF6B00] text-white rounded-tr-sm"
-              }`}>
-                <p className="text-sm leading-snug">{msg.text}</p>
-                <p className={`text-[10px] ${msg.from === "admin" ? "text-muted-foreground" : "text-white/60"}`}>{msg.time}</p>
+              <div
+                className={`max-w-[75%] px-4 py-2.5 rounded-2xl space-y-0.5 ${
+                  msg.from === "admin"
+                    ? "bg-[#1E1E1E] border border-border text-foreground rounded-tl-sm"
+                    : "bg-[#FF6B00] text-white rounded-tr-sm"
+                }`}
+              >
+                <p className="text-sm leading-snug whitespace-pre-wrap">{msg.text}</p>
+                <p className={`text-[10px] ${msg.from === "admin" ? "text-muted-foreground" : "text-white/60"}`}>
+                  {msg.time}
+                </p>
               </div>
             </div>
           )
@@ -2007,18 +2035,37 @@ function QuickChatPage({ isDesktop, isAdmin }: { isDesktop: boolean; isAdmin: bo
         <div ref={bottomRef} />
       </div>
 
+      {/* Admin Quick Action Chips */}
+      {messages.length <= 2 && (
+        <div className="px-4 pb-2 flex items-center gap-1.5 flex-wrap">
+          {ADMIN_QUICK_ACTIONS.map(action => (
+            <button
+              key={action}
+              onClick={() => handleSend(action)}
+              disabled={isLoading}
+              className="text-[11px] bg-[#161616] hover:bg-[#222222] border border-border text-muted-foreground hover:text-foreground px-2.5 py-1.5 rounded-lg transition-colors disabled:opacity-40"
+            >
+              {action}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Input bar */}
       <div className={`flex-none px-4 py-3 border-t border-border bg-background flex items-center gap-2.5 ${!isDesktop ? "mb-16" : ""}`}>
         <input
           value={input}
           onChange={e => setInput(e.target.value)}
-          onKeyDown={e => e.key === "Enter" && sendMessage()}
-          placeholder={isLoading ? "AI is typing…" : "Type a message…"}
+          onKeyDown={e => e.key === "Enter" && handleSend()}
+          placeholder={isLoading ? "Querying admin metrics…" : "Ask about inventory, orders, revenue, or customer issues…"}
           disabled={isLoading}
           className="flex-1 bg-[#1A1A1A] border border-border rounded-xl px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-[#FF6B00] transition-all disabled:opacity-60"
         />
-        <button onClick={sendMessage} disabled={!input.trim() || isLoading}
-          className="w-10 h-10 flex-none bg-[#FF6B00] rounded-xl flex items-center justify-center hover:bg-[#E05F00] transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+        <button
+          onClick={() => handleSend()}
+          disabled={!input.trim() || isLoading}
+          className="w-10 h-10 flex-none bg-[#FF6B00] rounded-xl flex items-center justify-center hover:bg-[#E05F00] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        >
           <Send size={16} className="text-white" />
         </button>
       </div>
