@@ -389,7 +389,7 @@ function DesktopSidebar({ current, onNavigate, cartCount, user, onLogout, isAdmi
             alt="Logo" 
             className="w-8 h-8 rounded-full aspect-square object-cover object-center flex-none" 
           />
-          <span className="text-base font-extrabold text-foreground">ShopWisely</span>
+          <span className="text-base font-extrabold text-foreground">HealthyLifePhil</span>
           {isAdmin && (
             <span className="ml-auto text-[9px] bg-[#FF6B00]/15 text-[#FF6B00] border border-[#FF6B00]/25 px-1.5 py-0.5 rounded-md font-bold tracking-wide flex-none">
               ADMIN
