@@ -6,20 +6,37 @@ async function req(path: string, options?: RequestInit) {
     ...options,
     headers: {
       "Content-Type": "application/json",
-      "apikey": ANON_KEY,
-      "Authorization": `Bearer ${ANON_KEY}`,
+      apikey: ANON_KEY,
+      Authorization: `Bearer ${ANON_KEY}`,
       ...options?.headers,
     },
   });
+
   const text = await res.text();
   let data: any;
+
   try {
     data = JSON.parse(text);
   } catch {
     throw new Error(`Non-JSON response (${res.status}): ${text.slice(0, 200)}`);
   }
+
   if (!res.ok) throw new Error(data.error ?? data.message ?? "Request failed");
   return data;
+}
+
+export type TimeRange = "today" | "week" | "month" | "quarter" | "year" | "custom";
+
+export interface SalesFilter {
+  range?: TimeRange;
+  startDate?: string;
+  endDate?: string;
+  category?: string;
+}
+
+export interface AnalyticsQuery {
+  question: string;
+  context?: Record<string, any>;
 }
 
 export const api = {
@@ -36,49 +53,71 @@ export const api = {
       req(`/auth/nickname/${userId}`, { method: "PUT", body: JSON.stringify({ nickname }) }),
   },
 
-  cart: {
-    get: (userId: string) => req(`/cart/${userId}`),
-    add: (userId: string, item: object) =>
-      req(`/cart/${userId}`, { method: "POST", body: JSON.stringify(item) }),
-    update: (userId: string, productId: number, qty: number) =>
-      req(`/cart/${userId}/${productId}`, { method: "PUT", body: JSON.stringify({ qty }) }),
-    remove: (userId: string, productId: number) =>
-      req(`/cart/${userId}/${productId}`, { method: "DELETE" }),
-    clear: (userId: string) =>
-      req(`/cart/${userId}`, { method: "DELETE" }),
-  },
-
-  wishlist: {
-    get: (userId: string) => req(`/wishlist/${userId}`),
-    add: (userId: string, productId: number) =>
-      req(`/wishlist/${userId}`, { method: "POST", body: JSON.stringify({ productId }) }),
-    remove: (userId: string, productId: number) =>
-      req(`/wishlist/${userId}/${productId}`, { method: "DELETE" }),
-  },
-
-  orders: {
-    get: (userId: string) => req(`/orders/${userId}`),
-    create: (userId: string, order: object) =>
-      req(`/orders/${userId}`, { method: "POST", body: JSON.stringify(order) }),
-  },
-
   admin: {
     requestCode: () =>
       req("/admin/request-code", { method: "POST" }) as Promise<{ expiresIn: number }>,
     verifyCode: (code: string) =>
-      req("/admin/verify-code", { method: "POST", body: JSON.stringify({ code }) }) as Promise<{ valid: boolean; error?: string }>,
+      req("/admin/verify-code", {
+        method: "POST",
+        body: JSON.stringify({ code }),
+      }) as Promise<{ valid: boolean; token?: string; error?: string }>,
+
+    // Admin-only analytics chat
+    chat: {
+      sendMessage: (
+        adminToken: string,
+        messages: { from: "admin" | "assistant"; text: string; time: string }[]
+      ) =>
+        req("/admin/chat/message", {
+          method: "POST",
+          headers: { "x-admin-token": adminToken },
+          body: JSON.stringify({ messages }),
+        }) as Promise<{ message: string; suggestions?: string[] }>,
+    },
   },
 
-  quickChat: {
-    sendMessage: (messages: { from: string; text: string; time: string }[]) =>
-      req("/quick-chat/message", { method: "POST", body: JSON.stringify({ messages }) }) as Promise<{ message: string }>,
+  analytics: {
+    // Total sales & historical metrics lookup
+    getTotalSales: (filters?: SalesFilter) => {
+      const params = new URLSearchParams(filters as Record<string, string>).toString();
+      return req(`/analytics/sales/total${params ? `?${params}` : ""}`) as Promise<{
+        totalRevenue: number;
+        orderCount: number;
+        averageOrderValue: number;
+        historicalBreakdown: { date: string; sales: number }[];
+      }>;
+    },
+
+    // AI/Gemini business insights & natural language queries
+    askInsights: (payload: AnalyticsQuery) =>
+      req("/analytics/insights/query", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }) as Promise<{
+        answer: string;
+        charts?: { type: string; data: any };
+        keyMetrics?: Record<string, number | string>;
+      }>,
+
+    // Recommended optimization steps based on sales & trend patterns
+    getRecommendations: (category?: string) => {
+      const query = category ? `?category=${encodeURIComponent(category)}` : "";
+      return req(`/analytics/recommendations${query}`) as Promise<{
+        recommendations: {
+          id: string;
+          title: string;
+          type: "pricing" | "inventory" | "marketing" | "retention";
+          impact: "high" | "medium" | "low";
+          description: string;
+        }[];
+      }>;
+    },
   },
 };
 
-export type User = { userId: string; email: string; name: string };
+export type User = { userId: string; email: string; name: string; role?: "admin" | "user" };
 
 const USER_KEY = "shopwave_user";
-const GUEST_KEY = "shopwave_guest_id";
 
 export function saveUser(user: User) {
   localStorage.setItem(USER_KEY, JSON.stringify(user));
@@ -88,15 +127,11 @@ export function loadUser(): User | null {
   try {
     const raw = localStorage.getItem(USER_KEY);
     return raw ? JSON.parse(raw) : null;
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
 export function clearUser() {
   localStorage.removeItem(USER_KEY);
-}
-
-export function getOrCreateGuestId(): string {
-  let id = localStorage.getItem(GUEST_KEY);
-  if (!id) { id = `guest_${crypto.randomUUID()}`; localStorage.setItem(GUEST_KEY, id); }
-  return id;
 }
