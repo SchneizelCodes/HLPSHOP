@@ -11,58 +11,22 @@ const supabase = createClient(
 );
 
 app.use("*", logger(console.log));
-app.use("/*", cors({
-  origin: "*",
-  allowHeaders: ["Content-Type", "Authorization", "apikey"],
-  allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  exposeHeaders: ["Content-Length"],
-  maxAge: 600,
-}));
+app.use(
+  "/*",
+  cors({
+    origin: "*",
+    allowHeaders: ["Content-Type", "Authorization", "apikey", "x-admin-token"],
+    allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    exposeHeaders: ["Content-Length"],
+    maxAge: 600,
+  }),
+);
 
 app.get("/health", (c) => c.json({ status: "ok" }));
 
 app.get("/time", (c) => {
   return c.json({ iso: new Date().toISOString(), ts: Date.now() });
 });
-
-// ─── TYPES ────────────────────────────────────────────────────────────────────
-
-interface CartItem {
-  id: number;
-  name: string;
-  price: number;
-  qty: number;
-  image: string;
-  color: string;
-  size: string;
-}
-
-interface OrderBody {
-  items: CartItem[];
-  total: number;
-  address: string;
-  delivery: string;
-  payment: string;
-}
-
-interface OrderRow {
-  id: string;
-  user_id: string;
-  items: CartItem[];
-  total: number;
-  address: string;
-  delivery: string;
-  payment: string;
-  status: string;
-  created_at: string;
-  estimated_delivery: string;
-}
-
-interface ChatMessage {
-  from: "admin" | "user" | "system";
-  text: string;
-  time: string;
-}
 
 // ─── AUTH ─────────────────────────────────────────────────────────────────────
 
@@ -93,182 +57,14 @@ app.post("/auth/login", async (c) => {
     .eq("email", email.toLowerCase())
     .single<{ user_id: string; email: string; name: string; password: string }>();
 
-  if (error || !user || user.password !== password)
+  if (error || !user || user.password !== password) {
     return c.json({ error: "Invalid email or password" }, 401);
+  }
 
   return c.json({ userId: user.user_id, email: user.email, name: user.name });
 });
 
-app.put("/auth/nickname/:userId", async (c) => {
-  const { userId } = c.req.param();
-  const { nickname } = await c.req.json<{ nickname: string }>();
-  if (!nickname?.trim()) return c.json({ error: "Nickname required" }, 400);
-
-  const { error } = await supabase
-    .from("users")
-    .update({ name: nickname.trim() })
-    .eq("user_id", userId);
-
-  if (error) return c.json({ error: "User not found" }, 404);
-  return c.json({ userId, name: nickname.trim() });
-});
-
-// ─── CART ─────────────────────────────────────────────────────────────────────
-
-app.get("/cart/:userId", async (c) => {
-  const { userId } = c.req.param();
-  const { data } = await supabase
-    .from("carts")
-    .select("items")
-    .eq("user_id", userId)
-    .single<{ items: CartItem[] }>();
-  return c.json(data?.items ?? []);
-});
-
-app.post("/cart/:userId", async (c) => {
-  const { userId } = c.req.param();
-  const item = await c.req.json<CartItem>();
-
-  const { data: existing } = await supabase
-    .from("carts").select("items").eq("user_id", userId).single<{ items: CartItem[] }>();
-
-  const cart: CartItem[] = existing?.items ?? [];
-  const idx = cart.findIndex((i) => i.id === item.id);
-  if (idx >= 0) cart[idx].qty += 1;
-  else cart.push({ ...item, qty: 1 });
-
-  await supabase.from("carts").upsert({ user_id: userId, items: cart });
-  return c.json(cart);
-});
-
-app.put("/cart/:userId/:productId", async (c) => {
-  const { userId, productId } = c.req.param();
-  const { qty } = await c.req.json<{ qty: number }>();
-
-  const { data: existing } = await supabase
-    .from("carts").select("items").eq("user_id", userId).single<{ items: CartItem[] }>();
-
-  let cart: CartItem[] = existing?.items ?? [];
-  if (qty < 1) cart = cart.filter((i) => i.id !== Number(productId));
-  else cart = cart.map((i) => i.id === Number(productId) ? { ...i, qty } : i);
-
-  await supabase.from("carts").upsert({ user_id: userId, items: cart });
-  return c.json(cart);
-});
-
-app.delete("/cart/:userId/:productId", async (c) => {
-  const { userId, productId } = c.req.param();
-
-  const { data: existing } = await supabase
-    .from("carts").select("items").eq("user_id", userId).single<{ items: CartItem[] }>();
-
-  const cart = (existing?.items ?? []).filter((i) => i.id !== Number(productId));
-  await supabase.from("carts").upsert({ user_id: userId, items: cart });
-  return c.json(cart);
-});
-
-app.delete("/cart/:userId", async (c) => {
-  const { userId } = c.req.param();
-  await supabase.from("carts").upsert({ user_id: userId, items: [] });
-  return c.json([]);
-});
-
-// ─── WISHLIST ─────────────────────────────────────────────────────────────────
-
-app.get("/wishlist/:userId", async (c) => {
-  const { userId } = c.req.param();
-  const { data } = await supabase
-    .from("wishlists").select("product_ids").eq("user_id", userId).single<{ product_ids: number[] }>();
-  return c.json(data?.product_ids ?? []);
-});
-
-app.post("/wishlist/:userId", async (c) => {
-  const { userId } = c.req.param();
-  const { productId } = await c.req.json<{ productId: number }>();
-
-  const { data: existing } = await supabase
-    .from("wishlists").select("product_ids").eq("user_id", userId).single<{ product_ids: number[] }>();
-
-  const ids: number[] = existing?.product_ids ?? [];
-  if (!ids.includes(productId)) ids.push(productId);
-
-  await supabase.from("wishlists").upsert({ user_id: userId, product_ids: ids });
-  return c.json(ids);
-});
-
-app.delete("/wishlist/:userId/:productId", async (c) => {
-  const { userId, productId } = c.req.param();
-
-  const { data: existing } = await supabase
-    .from("wishlists").select("product_ids").eq("user_id", userId).single<{ product_ids: number[] }>();
-
-  const ids = (existing?.product_ids ?? []).filter((id) => id !== Number(productId));
-  await supabase.from("wishlists").upsert({ user_id: userId, product_ids: ids });
-  return c.json(ids);
-});
-
-// ─── ORDERS ───────────────────────────────────────────────────────────────────
-
-const mapOrder = (o: OrderRow) => ({
-  id: o.id,
-  items: o.items,
-  total: o.total,
-  address: o.address,
-  delivery: o.delivery,
-  payment: o.payment,
-  status: o.status,
-  createdAt: o.created_at,
-  estimatedDelivery: o.estimated_delivery,
-});
-
-app.get("/orders/:userId", async (c) => {
-  const { userId } = c.req.param();
-  const { data } = await supabase
-    .from("orders")
-    .select("*")
-    .eq("user_id", userId)
-    .order("created_at", { ascending: false })
-    .returns<OrderRow[]>();
-  return c.json((data ?? []).map(mapOrder));
-});
-
-app.post("/orders/:userId", async (c) => {
-  const { userId } = c.req.param();
-  const body = await c.req.json<OrderBody>();
-
-  const orderId = `#ORD-${Date.now().toString().slice(-6)}`;
-  const estimatedDelivery = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
-    .toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-
-  const { error } = await supabase.from("orders").insert({
-    id: orderId,
-    user_id: userId,
-    items: body.items,
-    total: body.total,
-    address: body.address,
-    delivery: body.delivery,
-    payment: body.payment,
-    status: "To Ship",
-    estimated_delivery: estimatedDelivery,
-  });
-
-  if (error) return c.json({ error: "Failed to create order" }, 500);
-
-  await supabase.from("carts").upsert({ user_id: userId, items: [] });
-
-  return c.json({
-    id: orderId,
-    items: body.items,
-    total: body.total,
-    address: body.address,
-    delivery: body.delivery,
-    payment: body.payment,
-    status: "To Ship",
-    estimatedDelivery,
-  });
-});
-
-// ─── ADMIN CODE ───────────────────────────────────────────────────────────────
+// ─── ADMIN AUTH & VERIFICATION ────────────────────────────────────────────────
 
 const ADMIN_EMAIL = "joshuamanuelcamacho1@gmail.com";
 
@@ -284,7 +80,7 @@ app.post("/admin/request-code", async (c) => {
   const emailRes = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${resendKey}`,
+      Authorization: `Bearer ${resendKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
@@ -292,30 +88,20 @@ app.post("/admin/request-code", async (c) => {
       to: [ADMIN_EMAIL],
       subject: "Your ShopWisely Admin Access Code",
       html: `
-        <div style="font-family:'Helvetica Neue',Arial,sans-serif;max-width:420px;margin:0 auto;background:#0A0A0A;border-radius:16px;overflow:hidden;">
-          <div style="background:#FF6B00;padding:24px 32px;">
-            <h1 style="margin:0;color:#fff;font-size:20px;font-weight:800;letter-spacing:-0.5px;">ShopWisely</h1>
-            <p style="margin:4px 0 0;color:rgba(255,255,255,0.8);font-size:13px;">Admin Access Verification</p>
-          </div>
-          <div style="padding:32px;">
-            <p style="color:#F0F0F0;font-size:15px;margin:0 0 8px;">Your one-time access code:</p>
-            <div style="background:#141414;border:1px solid rgba(255,107,0,0.3);border-radius:12px;padding:20px;text-align:center;margin:16px 0;">
-              <span style="font-size:36px;font-weight:900;letter-spacing:10px;color:#FF6B00;">${code}</span>
-            </div>
-            <p style="color:#888;font-size:12px;margin:0;">Expires in <strong style="color:#F0F0F0;">5 minutes</strong>. Do not share this code with anyone.</p>
-          </div>
-          <div style="padding:16px 32px;border-top:1px solid rgba(255,255,255,0.08);">
-            <p style="color:#555;font-size:11px;margin:0;">If you did not request this code, ignore this email.</p>
-          </div>
+        <div style="font-family:sans-serif;max-width:420px;margin:0 auto;background:#0A0A0A;border-radius:16px;padding:24px;color:#fff;">
+          <h2 style="color:#FF6B00;margin-top:0;">Admin Access Verification</h2>
+          <p>Your one-time access code is:</p>
+          <div style="font-size:32px;font-weight:bold;letter-spacing:6px;color:#FF6B00;margin:16px 0;">${code}</div>
+          <p style="color:#888;font-size:12px;">Expires in 5 minutes.</p>
         </div>
       `,
     }),
   });
 
   if (!emailRes.ok) {
-    const err = await emailRes.json().catch(() => ({ message: undefined })) as { message?: string };
+    const err = (await emailRes.json().catch(() => ({}))) as { message?: string };
     await supabase.from("admin_codes").delete().eq("singleton", "current");
-    return c.json({ error: err.message ?? `Email send failed (${emailRes.status}). Check Resend API key.` }, 500);
+    return c.json({ error: err.message ?? "Email send failed." }, 500);
   }
 
   return c.json({ expiresIn: 300 });
@@ -331,36 +117,186 @@ app.post("/admin/verify-code", async (c) => {
     .eq("singleton", "current")
     .single<{ code: string; expires_at: number }>();
 
-  if (!stored) return c.json({ valid: false, error: "No active code — request a new one." }, 400);
+  if (!stored) return c.json({ valid: false, error: "No active code found." }, 400);
   if (Date.now() > stored.expires_at) {
     await supabase.from("admin_codes").delete().eq("singleton", "current");
-    return c.json({ valid: false, error: "Code expired — request a new one." }, 400);
+    return c.json({ valid: false, error: "Code expired." }, 400);
   }
   if (code !== stored.code) return c.json({ valid: false, error: "Incorrect code." }, 400);
 
   await supabase.from("admin_codes").delete().eq("singleton", "current");
-  return c.json({ valid: true });
+  return c.json({ valid: true, token: crypto.randomUUID() });
 });
 
-// ─── QUICK CHAT (Gemini) ─────────────────────────────────────────────────────
+// ─── ANALYTICS ────────────────────────────────────────────────────────────────
+
+app.get("/analytics/sales/total", async (c) => {
+  const range = c.req.query("range") || "month";
+  const category = c.req.query("category");
+
+  let query = supabase.from("orders").select("amount, created_at, category, status");
+
+  if (category) {
+    query = query.eq("category", category);
+  }
+
+  // Calculate cutoff timestamp
+  const now = new Date();
+  if (range === "today") {
+    now.setHours(0, 0, 0, 0);
+    query = query.gte("created_at", now.toISOString());
+  } else if (range === "week") {
+    now.setDate(now.getDate() - 7);
+    query = query.gte("created_at", now.toISOString());
+  } else if (range === "month") {
+    now.setMonth(now.getMonth() - 1);
+    query = query.gte("created_at", now.toISOString());
+  } else if (range === "year") {
+    now.setFullYear(now.getFullYear() - 1);
+    query = query.gte("created_at", now.toISOString());
+  }
+
+  const { data: orders, error } = await query;
+  if (error) return c.json({ error: error.message }, 500);
+
+  const totalRevenue = orders.reduce((sum, o) => sum + Number(o.amount || 0), 0);
+  const orderCount = orders.length;
+  const averageOrderValue = orderCount > 0 ? totalRevenue / orderCount : 0;
+
+  // Group historical revenue by date
+  const dateMap: Record<string, number> = {};
+  for (const o of orders) {
+    const d = o.created_at.slice(0, 10);
+    dateMap[d] = (dateMap[d] || 0) + Number(o.amount || 0);
+  }
+
+  const historicalBreakdown = Object.entries(dateMap)
+    .map(([date, sales]) => ({ date, sales }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  return c.json({
+    totalRevenue,
+    orderCount,
+    averageOrderValue,
+    historicalBreakdown,
+  });
+});
+
+app.get("/analytics/recommendations", async (c) => {
+  const { data: lowStock } = await supabase
+    .from("inventory")
+    .select("name, stock_level, reorder_point")
+    .filter("stock_level", "lte", "reorder_point");
+
+  const recommendations = [];
+
+  if (lowStock && lowStock.length > 0) {
+    recommendations.push({
+      id: "rec-stock-alert",
+      title: "Restock Warning",
+      type: "inventory",
+      impact: "high",
+      description: `${lowStock.length} items have fallen below their reorder threshold.`,
+    });
+  }
+
+  recommendations.push({
+    id: "rec-bundle-strategy",
+    title: "Basket Expansion Strategy",
+    type: "pricing",
+    impact: "medium",
+    description: "Bundle top complementary items to increase Average Order Value.",
+  });
+
+  return c.json({ recommendations });
+});
+
+// ─── INVENTORY & LOGS ─────────────────────────────────────────────────────────
+
+app.get("/inventory", async (c) => {
+  const { data, error } = await supabase
+    .from("inventory")
+    .select("*")
+    .order("stock_level", { ascending: true });
+
+  if (error) return c.json({ error: error.message }, 500);
+  return c.json(data);
+});
+
+app.put("/inventory/:sku", async (c) => {
+  const { sku } = c.req.param();
+  const body = await c.req.json<{ stock_level?: number; reorder_point?: number }>();
+
+  const { data, error } = await supabase
+    .from("inventory")
+    .update({ ...body, updated_at: new Date().toISOString() })
+    .eq("sku", sku)
+    .select()
+    .single();
+
+  if (error) return c.json({ error: error.message }, 500);
+
+  // Log the change
+  await supabase.from("transaction_logs").insert({
+    event_type: "inventory_adjustment",
+    payload: { sku, ...body },
+    status: "success",
+    actor_id: "admin",
+  });
+
+  return c.json(data);
+});
+
+app.get("/logs", async (c) => {
+  const limit = Number(c.req.query("limit") || 50);
+  const event_type = c.req.query("event_type");
+
+  let query = supabase
+    .from("transaction_logs")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (event_type) {
+    query = query.eq("event_type", event_type);
+  }
+
+  const { data, error } = await query;
+  if (error) return c.json({ error: error.message }, 500);
+  return c.json(data);
+});
+
+// ─── ADMIN OPERATIONS COPILOT (Gemini + DB Context) ───────────────────────────
 
 interface GeminiResponse {
   candidates: { content: { parts: { text: string }[] } }[];
 }
 
-app.post("/quick-chat/message", async (c) => {
+app.post("/admin/chat/message", async (c) => {
   const geminiKey = Deno.env.get("GEMINI_API_KEY");
   if (!geminiKey) return c.json({ error: "GEMINI_API_KEY secret not set" }, 500);
 
-  const { messages } = await c.req.json<{ messages: ChatMessage[] }>();
+  const { messages } = await c.req.json<{
+    messages: { from: "admin" | "assistant"; text: string; time: string }[];
+  }>();
+
   if (!Array.isArray(messages)) return c.json({ error: "messages array required" }, 400);
 
-  const contents = messages
-    .filter((m) => m.from !== "system")
-    .map((m) => ({
-      role: m.from === "admin" ? "model" : "user",
-      parts: [{ text: m.text }],
-    }));
+  // Pull live database metrics to give Gemini operational context
+  const [inventoryRes, ordersRes] = await Promise.all([
+    supabase.from("inventory").select("sku, name, stock_level, reorder_point").limit(20),
+    supabase.from("orders").select("id, amount, status, category, created_at").order("created_at", { ascending: false }).limit(10),
+  ]);
+
+  const liveContext = JSON.stringify({
+    inventorySnapshot: inventoryRes.data ?? [],
+    recentOrdersSnapshot: ordersRes.data ?? [],
+  });
+
+  const contents = messages.map((m) => ({
+    role: m.from === "assistant" ? "model" : "user",
+    parts: [{ text: m.text }],
+  }));
 
   const res = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`,
@@ -369,14 +305,18 @@ app.post("/quick-chat/message", async (c) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         system_instruction: {
-          parts: [{
-            text: `You are the ShopWisely Admin Operations Copilot, an internal assistant for store managers and administrators.
-You assist with store management, operations, fulfillment issues, inventory monitoring, revenue metrics, order status tracking, and fraud checks.
-Never act as a customer-facing support agent. Never offer shopping advice, public sizing help, or return assistance for shoppers. Keep responses concise, analytical, and tailored for internal store administration.`,
-          }],
+          parts: [
+            {
+              text: `You are the ShopWisely Operations Copilot, an internal assistant for store operations, inventory management, and business analytics.
+You have real-time access to the store database:
+${liveContext}
+
+When answering inquiries about stock levels, orders, bottlenecks, or revenue metrics, directly reference the data provided above. Be direct, analytical, and structured.`,
+            },
+          ],
         },
         contents,
-        generationConfig: { maxOutputTokens: 500, temperature: 0.3 },
+        generationConfig: { maxOutputTokens: 600, temperature: 0.2 },
       }),
     },
   );
@@ -387,8 +327,108 @@ Never act as a customer-facing support agent. Never offer shopping advice, publi
   }
 
   const data = (await res.json()) as GeminiResponse;
-  const reply = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "No response generated.";
+  const reply = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "Unable to analyze live operations.";
+
   return c.json({ message: reply });
+});
+
+// ─── PRODUCTS CRUD ───────────────────────────────────────────────────────────
+
+// Public: Get all products (supports category & search query)
+app.get("/products", async (c) => {
+  const query = c.req.query("q");
+  const category = c.req.query("category");
+
+  let dbQuery = supabase.from("products").select("*").order("id", { ascending: true });
+
+  if (category && category !== "All") {
+    dbQuery = dbQuery.eq("category", category);
+  }
+  if (query) {
+    dbQuery = dbQuery.ilike("name", `%${query}%`);
+  }
+
+  const { data, error } = await dbQuery;
+  if (error) return c.json({ error: error.message }, 500);
+
+  // Map snake_case database fields to camelCase frontend schema
+  const mapped = data.map((p) => ({
+    id: p.id,
+    name: p.name,
+    price: Number(p.price),
+    originalPrice: Number(p.original_price),
+    rating: Number(p.rating),
+    reviews: p.reviews,
+    image: p.image,
+    category: p.category,
+    badge: p.badge,
+  }));
+
+  return c.json(mapped);
+});
+
+// Admin: Create product
+app.post("/admin/products", async (c) => {
+  const body = await c.req.json();
+  const { data, error } = await supabase
+    .from("products")
+    .insert({
+      name: body.name,
+      price: body.price,
+      original_price: body.originalPrice || body.price,
+      rating: body.rating || 5.0,
+      reviews: body.reviews || 0,
+      image: body.image,
+      category: body.category,
+      badge: body.badge || null,
+    })
+    .select()
+    .single();
+
+  if (error) return c.json({ error: error.message }, 500);
+
+  // Automatically add an inventory tracking record for this product
+  await supabase.from("inventory").insert({
+    sku: `SKU-${data.id}`,
+    name: data.name,
+    stock_level: body.stockLevel || 20,
+    reorder_point: 5,
+    warehouse_id: "wh-main",
+  });
+
+  return c.json(data);
+});
+
+// Admin: Update product
+app.put("/admin/products/:id", async (c) => {
+  const id = c.req.param("id");
+  const body = await c.req.json();
+
+  const { data, error } = await supabase
+    .from("products")
+    .update({
+      name: body.name,
+      price: body.price,
+      original_price: body.originalPrice,
+      image: body.image,
+      category: body.category,
+      badge: body.badge,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id)
+    .select()
+    .single();
+
+  if (error) return c.json({ error: error.message }, 500);
+  return c.json(data);
+});
+
+// Admin: Delete product
+app.delete("/admin/products/:id", async (c) => {
+  const id = c.req.param("id");
+  const { error } = await supabase.from("products").delete().eq("id", id);
+  if (error) return c.json({ error: error.message }, 500);
+  return c.json({ success: true });
 });
 
 Deno.serve(app.fetch);
