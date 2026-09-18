@@ -363,29 +363,32 @@ app.post("/quick-chat/message", async (c) => {
     }));
 
   const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${geminiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         system_instruction: {
           parts: [{
-            text: "You are a friendly, concise customer support assistant for ShopWisely — a premium fashion and apparel online store. Help with orders, returns, product recommendations, sizing, shipping, and general questions. Keep responses warm and under 3 sentences unless more detail is needed.",
+            text: `You are the ShopWisely Admin Operations Copilot, an internal assistant for store managers and administrators.
+You assist with store management, operations, fulfillment issues, inventory monitoring, revenue metrics, order status tracking, and fraud checks.
+Never act as a customer-facing support agent. Never offer shopping advice, public sizing help, or return assistance for shoppers. Keep responses concise, analytical, and tailored for internal store administration.`,
           }],
         },
         contents,
-        generationConfig: { maxOutputTokens: 400, temperature: 0.7 },
+        generationConfig: { maxOutputTokens: 500, temperature: 0.3 },
       }),
     },
   );
 
   if (!res.ok) {
-    const err = await res.json() as { error?: { message?: string } };
+    const err = (await res.json()) as { error?: { message?: string } };
     return c.json({ error: err.error?.message ?? "Gemini request failed" }, 500);
   }
 
-  const data = await res.json() as GeminiResponse;
-  return c.json({ message: data.candidates[0].content.parts[0].text });
+  const data = (await res.json()) as GeminiResponse;
+  const reply = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "No response generated.";
+  return c.json({ message: reply });
 });
 
 Deno.serve(app.fetch);
