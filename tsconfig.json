@@ -12,9 +12,14 @@
     "isolatedModules": true,
     "allowImportingTsExtensions": true,
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@/lib/*": ["./lib/*"]
     }
   },
-  "include": ["src/**/*", "index.html"],
+  "include": [
+    "src/**/*",
+    "lib/**/*",
+    "index.html"
+  ],
   "exclude": ["node_modules", "supabase", "src/imports"]
 }

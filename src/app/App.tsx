@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { supabase } from "../lib/supabaseClient";
 import {  
   type InventoryItem, 
   type TransactionLog,
@@ -18,7 +19,7 @@ import {
   X, Mail, Send, Eye, EyeOff,
   TrendingUp, Zap, LogOut, Grid, List, Lock,
   Monitor, Smartphone, LayoutGrid, Shield, Bot, RefreshCw,
-  Activity, KeyRound, Award, Check
+  Activity, KeyRound, Award, Check, Trash2
 } from "lucide-react";
 import myImage from "../imports/logo.jpg";
 
@@ -519,6 +520,52 @@ function DesktopContent({ children }: { children: React.ReactNode }) {
   );
 }
 
+// ─── CONFIRM DIALOG ───────────────────────────────────────────────────────────
+
+function ConfirmDialog({ title, message, confirmLabel = "Delete", confirmVariant = "danger", onConfirm, onCancel }: {
+  title: string; message: string; confirmLabel?: string; confirmVariant?: "danger" | "primary";
+  onConfirm: () => void; onCancel: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onCancel} />
+
+      {/* Card */}
+      <div className="relative w-full max-w-sm bg-[#111] border border-border rounded-2xl shadow-2xl overflow-hidden">
+        {/* Top accent bar */}
+        <div className={`h-1 w-full ${confirmVariant === "danger" ? "bg-red-500" : "bg-[#FF6B00]"}`} />
+
+        <div className="p-6">
+          {/* Icon */}
+          <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mb-4 ${confirmVariant === "danger" ? "bg-red-500/15" : "bg-[#FF6B00]/15"}`}>
+            {confirmVariant === "danger"
+              ? <Trash2 size={22} className="text-red-400" />
+              : <Shield size={22} className="text-[#FF6B00]" />}
+          </div>
+
+          {/* Text */}
+          <h3 className="text-base font-bold text-foreground mb-1">{title}</h3>
+          <p className="text-sm text-muted-foreground leading-relaxed">{message}</p>
+
+          {/* Buttons */}
+          <div className="flex gap-3 mt-6">
+            <button
+              onClick={onCancel}
+              className="flex-1 py-2.5 rounded-xl border border-border text-sm font-semibold text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors">
+              Cancel
+            </button>
+            <button
+              onClick={onConfirm}
+              className={`flex-1 py-2.5 rounded-xl text-sm font-bold text-white transition-colors ${confirmVariant === "danger" ? "bg-red-500 hover:bg-red-600" : "bg-[#FF6B00] hover:bg-[#E05F00]"}`}>
+              {confirmLabel}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 // ─── ADMIN ACCESS MODAL ───────────────────────────────────────────────────────
 
 function AdminAccessModal({ onClose, onGrantAccess }: { onClose: () => void; onGrantAccess: () => void }) {
@@ -1183,6 +1230,24 @@ function LoginPage({ onLogin }: { onNavigate: (p: Page) => void; onLogin: (user:
           {loading ? "Please wait…" : mode === "login" ? "Sign In" : "Create Account"}
         </Btn>
         <div className="flex items-center gap-3 my-5"><div className="flex-1 h-px bg-border" /><span className="text-xs text-muted-foreground">or</span><div className="flex-1 h-px bg-border" /></div>
+        {/* Google Sign-In */}
+        <button
+          onClick={async () => {
+            await supabase.auth.signInWithOAuth({
+              provider: "google",
+              options: { redirectTo: window.location.origin },
+            });
+          }}
+          className="w-full flex items-center justify-center gap-3 bg-[#1A1A1A] border border-border hover:border-foreground/30 rounded-xl px-4 py-3 text-sm font-semibold text-foreground transition-colors mb-3">
+          {/* Google logo SVG */}
+          <svg width="18" height="18" viewBox="0 0 48 48">
+            <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+            <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+            <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+            <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+          </svg>
+          Sign in with Google
+        </button>
         <Btn full variant="ghost" onClick={() => onLogin({ userId: getOrCreateGuestId(), email: "guest@shopwave.com", name: "Guest" })}>Continue as Guest</Btn>
         <p className="text-center text-sm text-muted-foreground mt-6">
           {mode === "login" ? "Don't have an account? " : "Already have an account? "}
@@ -2282,6 +2347,13 @@ export default function App() {
   const serverTime = useServerClock();
   const [isAdmin, setIsAdmin] = useState(false);
   const [showAdminModal, setShowAdminModal] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState<{
+  title: string; message: string; confirmLabel?: string; confirmVariant?: "danger" | "primary"; onConfirm: () => void;
+} | null>(null);
+
+const openConfirm = (title: string, message: string, onConfirm: () => void, confirmLabel = "Delete", confirmVariant: "danger" | "primary" = "danger") => {
+  setConfirmDialog({ title, message, onConfirm, confirmLabel, confirmVariant });
+};
 
   const fetchProducts = useCallback(async () => {
     try {
@@ -2315,6 +2387,33 @@ export default function App() {
       // Graceful local state retention
     }
     setDataLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    // Listen for Supabase OAuth callback
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        const oauthUser: User = {
+          userId: session.user.id,
+          email: session.user.email ?? "",
+          name: session.user.user_metadata?.full_name ?? session.user.user_metadata?.name ?? session.user.email ?? "User",
+        };
+        setUser(oauthUser);
+        saveUser(oauthUser);
+        loadUserData(oauthUser).then(() => setPage("home"));
+      }
+    });
+
+    const saved = loadUser();
+    if (saved) {
+      setUser(saved);
+      loadUserData(saved).then(() => setPage("home"));
+    } else {
+      setPage("login");
+      setDataLoaded(true);
+    }
+
+    return () => subscription.unsubscribe();
   }, []);
 
   useEffect(() => {
@@ -2360,6 +2459,16 @@ export default function App() {
     setPage("login");
   };
 
+  // Wraps handleLogout with a confirm dialog
+const confirmLogout = () => openConfirm(
+  "Sign Out",
+  "Are you sure you want to sign out of your account?",
+  handleLogout,
+  "Sign Out",
+  "danger"
+);
+
+
   const navigate = (p: Page, id?: number) => {
     if (id) setProductId(id);
     setPage(p);
@@ -2403,6 +2512,12 @@ export default function App() {
       try { await api.cart.remove(user.userId, id); } catch {}
     }
   }, [user]);
+  // Wraps removeFromCart with a confirm dialog
+const confirmRemoveFromCart = (id: number) => openConfirm(
+  "Remove Item",
+  "Remove this item from your cart?",
+  () => removeFromCart(id)
+);
 
   const toggleWishlist = useCallback(async (id: number) => {
     const isInList = wishlist.includes(id);
@@ -2478,14 +2593,14 @@ export default function App() {
       case "wishlist":
         return <WishlistPage {...shared} isDesktop={isDesktop} />;
       case "cart":
-        return <CartPage onNavigate={navigate} cart={cart} onUpdateQty={updateQty} onRemove={removeFromCart} isDesktop={isDesktop} />;
+        return <CartPage onNavigate={navigate} cart={cart} onUpdateQty={updateQty} onRemove={confirmRemoveFromCart} isDesktop={isDesktop} />;
       case "shipping-addr": return <ShippingAddrPage onNavigate={navigate} />;
       case "delivery": return <DeliveryPage onNavigate={navigate} />;
       case "payment": return <PaymentPage onNavigate={navigate} />;
       case "order-review": return <OrderReviewPage onNavigate={navigate} cart={cart} onPlaceOrder={placeOrder} />;
       case "confirmation": return <ConfirmationPage onNavigate={navigate} orderId={lastOrderId} />;
       case "orders": return <OrdersPage onNavigate={navigate} isDesktop={isDesktop} userId={user?.userId} />;
-      case "profile": return <ProfilePage onNavigate={navigate} isDesktop={isDesktop} user={user} onLogout={handleLogout} />;
+      case "profile": return <ProfilePage onNavigate={navigate} isDesktop={isDesktop} user={user} onLogout={confirmLogout} />;
       case "quick-chat":
         return (
           <AdminLayout current={page} onNavigate={navigate} isDesktop={isDesktop}>
@@ -2515,7 +2630,7 @@ export default function App() {
         renderContent()
       ) : isDesktop ? (
         <>
-          <DesktopSidebar current={page} onNavigate={navigate} cartCount={cartCount} notifCount={2} user={user} onLogout={handleLogout}
+          <DesktopSidebar current={page} onNavigate={navigate} cartCount={cartCount} notifCount={2} user={user} onLogout={confirmLogout}
             isAdmin={isAdmin} onAdminAccess={() => setShowAdminModal(true)} onRevokeAdmin={() => { setIsAdmin(false); if (page === "quick-chat") navigate("home"); }} />
           <DesktopTopBar current={page} onNavigate={navigate} cartCount={cartCount} notifCount={2} greeting={greeting} serverTime={serverTime} />
           <DesktopContent>{renderContent()}</DesktopContent>
@@ -2551,6 +2666,17 @@ export default function App() {
           onGrantAccess={() => { setIsAdmin(true); setShowAdminModal(false); }}
         />
       )}
+      {confirmDialog && (
+  <ConfirmDialog
+    title={confirmDialog.title}
+    message={confirmDialog.message}
+    confirmLabel={confirmDialog.confirmLabel}
+    confirmVariant={confirmDialog.confirmVariant}
+    onConfirm={() => { confirmDialog.onConfirm(); setConfirmDialog(null); }}
+    onCancel={() => setConfirmDialog(null)}
+  />
+)}
     </div>
+
   );
 }
