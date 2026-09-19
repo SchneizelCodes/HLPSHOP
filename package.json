@@ -89,7 +89,9 @@
     },
   "pnpm": {
     "overrides": {
-      "vite": "6.3.5"
+      "vite": "6.3.5",
+      "yallist": "^4.0.0",
+    "lru-cache": "^6.0.0"
     }
   }
 }
